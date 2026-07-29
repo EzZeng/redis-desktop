@@ -23,6 +23,24 @@ npm run dev
 
 Open the app (default: `http://localhost:8080`).
 
+## Offline install (no npmjs.org)
+
+If your network blocks the npm registry, restore dependencies from the GitHub Release bundle (Linux x64):
+
+```bash
+# Preferred
+./scripts/offline-install.sh
+
+# Or manually
+curl -fL -o node_modules.tar.gz \
+  https://github.com/EzZeng/redis-desktop/releases/download/offline-deps-v1/node_modules.tar.gz
+tar -xzf node_modules.tar.gz
+npm run dev
+```
+
+Release: https://github.com/EzZeng/redis-desktop/releases/tag/offline-deps-v1
+
+
 ## Scripts
 
 | Command | Description |
