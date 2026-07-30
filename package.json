@@ -111,7 +111,9 @@
       "electron/main.cjs",
       "electron/preload.cjs",
       "electron-dist/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*",
+      "!**/node_modules/**"
     ],
     "asar": true,
     "win": {
@@ -138,7 +140,11 @@
         "AppImage"
       ],
       "category": "Development"
-    }
+    },
+    "npmRebuild": false,
+    "nodeGypRebuild": false
   },
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "description": "Desktop-style Redis client with demo engine",
+  "author": "EzZeng"
 }
