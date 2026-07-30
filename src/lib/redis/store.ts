@@ -6,6 +6,12 @@ import {
   type RedisType,
   type RedisValue,
 } from "./engine";
+import {
+  RemoteRedisEngine,
+  getRedisBridge,
+  isElectronRuntime,
+  isRemoteEngine,
+} from "./remote";
 
 export interface ConnectionProfile {
   id: string;
@@ -25,13 +31,17 @@ export interface CliLine {
   text: string;
 }
 
+type Engine = RedisEngine | RemoteRedisEngine;
+
 interface RedisState {
   profiles: ConnectionProfile[];
   activeProfileId: string | null;
   connected: boolean;
   connecting: boolean;
   connectionError: string | null;
-  engine: RedisEngine | null;
+  engine: Engine | null;
+  /** true when talking to real redis-server via Electron */
+  remote: boolean;
   db: number;
   keys: KeyMeta[];
   filter: string;
@@ -41,25 +51,36 @@ interface RedisState {
   cliCmdHistory: string[];
   sidebarTab: "keys" | "cli" | "info";
   connect: (profileId: string) => Promise<void>;
-  disconnect: () => void;
+  disconnect: () => Promise<void>;
   addProfile: (p: Omit<ConnectionProfile, "id">) => string;
   updateProfile: (id: string, patch: Partial<ConnectionProfile>) => void;
   removeProfile: (id: string) => void;
-  refreshKeys: () => void;
+  refreshKeys: () => Promise<void>;
   setFilter: (f: string) => void;
-  selectDb: (db: number) => void;
-  selectKey: (key: string | null) => void;
-  saveValue: (key: string, value: RedisValue, ttl: number) => void;
-  deleteKeys: (keys: string[]) => void;
-  createKey: (key: string, type: RedisType, ttl?: number) => void;
-  runCli: (cmd: string) => void;
+  selectDb: (db: number) => Promise<void>;
+  selectKey: (key: string | null) => Promise<void>;
+  saveValue: (key: string, value: RedisValue, ttl: number) => Promise<void>;
+  deleteKeys: (keys: string[]) => Promise<void>;
+  createKey: (key: string, type: RedisType, ttl?: number) => Promise<void>;
+  runCli: (cmd: string) => Promise<void>;
   clearCli: () => void;
   setSidebarTab: (t: "keys" | "cli" | "info") => void;
-  renameKey: (oldKey: string, newKey: string) => boolean;
-  setTtl: (key: string, ttl: number) => void;
+  renameKey: (oldKey: string, newKey: string) => Promise<boolean>;
+  setTtl: (key: string, ttl: number) => Promise<void>;
+  getInfoText: () => Promise<string>;
 }
 
 const DEFAULT_PROFILES: ConnectionProfile[] = [
+  {
+    id: "local-redis",
+    name: "Local Redis",
+    host: "127.0.0.1",
+    port: 6379,
+    username: "",
+    password: "",
+    demo: false,
+    color: "#dc382d",
+  },
   {
     id: "demo-local",
     name: "Local Demo",
@@ -68,23 +89,31 @@ const DEFAULT_PROFILES: ConnectionProfile[] = [
     username: "",
     password: "",
     demo: true,
-    color: "#dc382d",
-  },
-  {
-    id: "demo-staging",
-    name: "Staging Cache",
-    host: "redis.staging.internal",
-    port: 6379,
-    username: "app",
-    password: "",
-    demo: true,
-    color: "#3b82f6",
+    color: "#e85d4c",
   },
 ];
 
 let lineId = 0;
 function nextId() {
   return `l${++lineId}`;
+}
+
+async function engineKeys(engine: Engine, pattern: string): Promise<KeyMeta[]> {
+  if (isRemoteEngine(engine)) return engine.keysAsync(pattern);
+  return engine.keys(pattern);
+}
+
+async function engineGetEntry(
+  engine: Engine,
+  key: string,
+): Promise<(RedisValue & { ttl: number }) | null> {
+  if (isRemoteEngine(engine)) return engine.getEntryAsync(key);
+  return engine.getEntry(key);
+}
+
+async function engineExec(engine: Engine, line: string): Promise<string> {
+  if (isRemoteEngine(engine)) return engine.execAsync(line);
+  return engine.exec(line);
 }
 
 export const useRedisStore = create<RedisState>()(
@@ -96,6 +125,7 @@ export const useRedisStore = create<RedisState>()(
       connecting: false,
       connectionError: null,
       engine: null,
+      remote: false,
       db: 0,
       keys: [],
       filter: "*",
@@ -113,37 +143,135 @@ export const useRedisStore = create<RedisState>()(
           connectionError: null,
           activeProfileId: profileId,
         });
-        await new Promise((r) => setTimeout(r, 420));
-        // Browser sandbox: always use demo engine (real TCP Redis is not available).
-        const engine = new RedisEngine();
-        engine.seedDemo();
-        set({
-          engine,
-          connected: true,
-          connecting: false,
-          db: 0,
-          selectedKey: null,
-          selectedValue: null,
-          cliHistory: [
-            {
-              id: nextId(),
-              kind: "sys",
-              text: `Connected to ${profile.name} (${profile.host}:${profile.port}) · demo engine`,
-            },
-            {
-              id: nextId(),
-              kind: "sys",
-              text: "Type HELP for supported commands. Sample keys loaded in db0.",
-            },
-          ],
-        });
-        get().refreshKeys();
+
+        try {
+          // Real Redis via Electron IPC when not a demo profile
+          const bridge = getRedisBridge();
+          const wantRemote = !profile.demo && isElectronRuntime() && !!bridge;
+
+          if (wantRemote && bridge) {
+            const remote = new RemoteRedisEngine(bridge);
+            await remote.connect({
+              host: profile.host,
+              port: profile.port,
+              username: profile.username,
+              password: profile.password,
+              db: 0,
+            });
+            set({
+              engine: remote,
+              remote: true,
+              connected: true,
+              connecting: false,
+              db: 0,
+              selectedKey: null,
+              selectedValue: null,
+              cliHistory: [
+                {
+                  id: nextId(),
+                  kind: "sys",
+                  text: `Connected to ${profile.name} (${profile.host}:${profile.port}) · redis-server`,
+                },
+                {
+                  id: nextId(),
+                  kind: "sys",
+                  text: "Live TCP connection via Electron. Type HELP or any Redis command.",
+                },
+              ],
+            });
+            await get().refreshKeys();
+            return;
+          }
+
+          // Demo / browser fallback
+          if (!profile.demo && !isElectronRuntime()) {
+            // Browser cannot open TCP to Redis — fall back to demo with notice
+            await new Promise((r) => setTimeout(r, 200));
+            const engine = new RedisEngine();
+            engine.seedDemo();
+            set({
+              engine,
+              remote: false,
+              connected: true,
+              connecting: false,
+              db: 0,
+              selectedKey: null,
+              selectedValue: null,
+              connectionError: null,
+              cliHistory: [
+                {
+                  id: nextId(),
+                  kind: "sys",
+                  text: `Browser preview cannot reach redis-server at ${profile.host}:${profile.port}.`,
+                },
+                {
+                  id: nextId(),
+                  kind: "sys",
+                  text: "Using built-in demo engine. Open the Windows desktop app for real Redis TCP.",
+                },
+              ],
+            });
+            await get().refreshKeys();
+            return;
+          }
+
+          await new Promise((r) => setTimeout(r, 280));
+          const engine = new RedisEngine();
+          engine.seedDemo();
+          set({
+            engine,
+            remote: false,
+            connected: true,
+            connecting: false,
+            db: 0,
+            selectedKey: null,
+            selectedValue: null,
+            cliHistory: [
+              {
+                id: nextId(),
+                kind: "sys",
+                text: `Connected to ${profile.name} (${profile.host}:${profile.port}) · demo engine`,
+              },
+              {
+                id: nextId(),
+                kind: "sys",
+                text: "Type HELP for supported commands. Sample keys loaded in db0.",
+              },
+            ],
+          });
+          await get().refreshKeys();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          set({
+            connecting: false,
+            connected: false,
+            engine: null,
+            remote: false,
+            connectionError: msg,
+            cliHistory: [
+              {
+                id: nextId(),
+                kind: "err",
+                text: `Connection failed: ${msg}`,
+              },
+            ],
+          });
+        }
       },
 
-      disconnect: () => {
+      disconnect: async () => {
+        const { engine } = get();
+        if (isRemoteEngine(engine)) {
+          try {
+            await engine.disconnect();
+          } catch {
+            /* ignore */
+          }
+        }
         set({
           connected: false,
           engine: null,
+          remote: false,
           keys: [],
           selectedKey: null,
           selectedValue: null,
@@ -166,117 +294,130 @@ export const useRedisStore = create<RedisState>()(
 
       removeProfile: (id) => {
         const s = get();
-        if (s.activeProfileId === id) s.disconnect();
+        if (s.activeProfileId === id) void s.disconnect();
         set((st) => ({ profiles: st.profiles.filter((p) => p.id !== id) }));
       },
 
-      refreshKeys: () => {
+      refreshKeys: async () => {
         const { engine, filter } = get();
         if (!engine) return;
-        set({ keys: engine.keys(filter || "*") });
-        const sel = get().selectedKey;
-        if (sel) {
-          const v = engine.getEntry(sel);
-          set({ selectedValue: v });
-          if (!v) set({ selectedKey: null });
+        try {
+          const keys = await engineKeys(engine, filter || "*");
+          set({ keys });
+          const sel = get().selectedKey;
+          if (sel) {
+            const v = await engineGetEntry(engine, sel);
+            set({ selectedValue: v });
+            if (!v) set({ selectedKey: null });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          set((s) => ({
+            cliHistory: [
+              ...s.cliHistory,
+              { id: nextId(), kind: "err", text: `Refresh keys failed: ${msg}` },
+            ],
+          }));
         }
       },
 
       setFilter: (f) => {
         set({ filter: f });
-        get().refreshKeys();
+        void get().refreshKeys();
       },
 
-      selectDb: (db) => {
+      selectDb: async (db) => {
         const { engine } = get();
         if (!engine) return;
-        engine.select(db);
+        await engine.select(db);
         set({ db, selectedKey: null, selectedValue: null });
-        get().refreshKeys();
+        await get().refreshKeys();
       },
 
-      selectKey: (key) => {
+      selectKey: async (key) => {
         const { engine } = get();
         if (!engine || !key) {
           set({ selectedKey: null, selectedValue: null });
           return;
         }
-        set({ selectedKey: key, selectedValue: engine.getEntry(key) });
+        const value = await engineGetEntry(engine, key);
+        set({ selectedKey: key, selectedValue: value });
       },
 
-      saveValue: (key, value, ttl) => {
+      saveValue: async (key, value, ttl) => {
         const { engine } = get();
         if (!engine) return;
         switch (value.type) {
           case "string":
-            engine.setString(key, value.value, ttl > 0 ? ttl : undefined);
+            await engine.setString(key, value.value, ttl > 0 ? ttl : undefined);
             break;
           case "hash":
-            engine.setHash(key, value.value, ttl > 0 ? ttl : undefined);
+            await engine.setHash(key, value.value, ttl > 0 ? ttl : undefined);
             break;
           case "list":
-            engine.setList(key, value.value, ttl > 0 ? ttl : undefined);
+            await engine.setList(key, value.value, ttl > 0 ? ttl : undefined);
             break;
           case "set":
-            engine.setSet(key, value.value, ttl > 0 ? ttl : undefined);
+            await engine.setSet(key, value.value, ttl > 0 ? ttl : undefined);
             break;
           case "zset":
-            engine.setZSet(key, value.value, ttl > 0 ? ttl : undefined);
+            await engine.setZSet(key, value.value, ttl > 0 ? ttl : undefined);
             break;
         }
-        if (ttl < 0) engine.persist(key);
-        else if (ttl > 0) engine.expire(key, ttl);
-        get().refreshKeys();
-        get().selectKey(key);
+        if (ttl < 0) await engine.persist(key);
+        else if (ttl > 0) await engine.expire(key, ttl);
+        await get().refreshKeys();
+        await get().selectKey(key);
       },
 
-      deleteKeys: (keys) => {
+      deleteKeys: async (keys) => {
         const { engine, selectedKey } = get();
         if (!engine) return;
-        engine.del(...keys);
+        await engine.del(...keys);
         if (selectedKey && keys.includes(selectedKey)) {
           set({ selectedKey: null, selectedValue: null });
         }
-        get().refreshKeys();
+        await get().refreshKeys();
       },
 
-      createKey: (key, type, ttl) => {
+      createKey: async (key, type, ttl) => {
         const { engine } = get();
         if (!engine) return;
-        if (engine.getEntry(key)) {
+        const existing = await engineGetEntry(engine, key);
+        if (existing) {
           throw new Error("Key already exists");
         }
         switch (type) {
           case "string":
-            engine.setString(key, "", ttl);
+            await engine.setString(key, "", ttl);
             break;
           case "hash":
-            engine.setHash(key, { field: "value" }, ttl);
+            await engine.setHash(key, { field: "value" }, ttl);
             break;
           case "list":
-            engine.setList(key, ["item"], ttl);
+            await engine.setList(key, ["item"], ttl);
             break;
           case "set":
-            engine.setSet(key, ["member"], ttl);
+            await engine.setSet(key, ["member"], ttl);
             break;
           case "zset":
-            engine.setZSet(key, [{ member: "member", score: 0 }], ttl);
+            await engine.setZSet(key, [{ member: "member", score: 0 }], ttl);
             break;
         }
-        get().refreshKeys();
-        get().selectKey(key);
+        await get().refreshKeys();
+        await get().selectKey(key);
       },
 
-      runCli: (cmd) => {
+      runCli: async (cmd) => {
         const trimmed = cmd.trim();
         if (!trimmed) return;
         const { engine } = get();
         set((s) => ({
-          cliHistory: [
-            ...s.cliHistory,
-            { id: nextId(), kind: "in", text: trimmed },
-          ],
-          cliCmdHistory: [trimmed, ...s.cliCmdHistory.filter((c) => c !== trimmed)].slice(0, 100),
+          cliHistory: [...s.cliHistory, { id: nextId(), kind: "in", text: trimmed }],
+          cliCmdHistory: [trimmed, ...s.cliCmdHistory.filter((c) => c !== trimmed)].slice(
+            0,
+            100,
+          ),
         }));
         if (!engine) {
           set((s) => ({
@@ -287,13 +428,12 @@ export const useRedisStore = create<RedisState>()(
           }));
           return;
         }
-        const reply = engine.exec(trimmed);
+        const reply = await engineExec(engine, trimmed);
         const kind = reply.startsWith("(error)") ? "err" : "out";
         set((s) => ({
           cliHistory: [...s.cliHistory, { id: nextId(), kind, text: reply }],
           db: engine.currentDb,
         }));
-        // Refresh if mutating-ish commands
         const head = trimmed.split(/\s+/)[0]?.toUpperCase() ?? "";
         if (
           [
@@ -303,15 +443,20 @@ export const useRedisStore = create<RedisState>()(
             "PERSIST",
             "RENAME",
             "FLUSHDB",
+            "FLUSHALL",
             "HSET",
             "LPUSH",
             "RPUSH",
             "SADD",
             "ZADD",
             "SELECT",
+            "GETSET",
+            "MSET",
+            "INCR",
+            "DECR",
           ].includes(head)
         ) {
-          get().refreshKeys();
+          await get().refreshKeys();
         }
       },
 
@@ -319,29 +464,49 @@ export const useRedisStore = create<RedisState>()(
 
       setSidebarTab: (t) => set({ sidebarTab: t }),
 
-      renameKey: (oldKey, newKey) => {
+      renameKey: async (oldKey, newKey) => {
         const { engine } = get();
         if (!engine) return false;
-        const ok = engine.rename(oldKey, newKey);
+        const ok = await engine.rename(oldKey, newKey);
         if (ok) {
-          get().refreshKeys();
-          get().selectKey(newKey);
+          await get().refreshKeys();
+          await get().selectKey(newKey);
         }
         return ok;
       },
 
-      setTtl: (key, ttl) => {
+      setTtl: async (key, ttl) => {
         const { engine } = get();
         if (!engine) return;
-        if (ttl < 0) engine.persist(key);
-        else engine.expire(key, ttl);
-        get().refreshKeys();
-        get().selectKey(key);
+        if (ttl < 0) await engine.persist(key);
+        else await engine.expire(key, ttl);
+        await get().refreshKeys();
+        await get().selectKey(key);
+      },
+
+      getInfoText: async () => {
+        const { engine } = get();
+        if (!engine) return "";
+        return engineExec(engine, "INFO");
       },
     }),
     {
       name: "redis-desktop-profiles",
       partialize: (s) => ({ profiles: s.profiles }),
+      // Merge new default profiles (e.g. Local Redis) for existing users
+      merge: (persisted, current) => {
+        const p = persisted as Partial<RedisState> | undefined;
+        const saved = p?.profiles ?? [];
+        const byId = new Map(saved.map((x) => [x.id, x]));
+        for (const d of DEFAULT_PROFILES) {
+          if (!byId.has(d.id)) byId.set(d.id, d);
+        }
+        return {
+          ...current,
+          ...p,
+          profiles: [...byId.values()],
+        };
+      },
     },
   ),
 );

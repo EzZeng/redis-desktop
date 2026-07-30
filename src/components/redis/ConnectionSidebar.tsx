@@ -23,12 +23,15 @@ export function ConnectionSidebar() {
   const addProfile = useRedisStore((s) => s.addProfile);
   const removeProfile = useRedisStore((s) => s.removeProfile);
   const [showForm, setShowForm] = useState(false);
+  const connectionError = useRedisStore((s) => s.connectionError);
+  const remote = useRedisStore((s) => s.remote);
   const [form, setForm] = useState({
     name: "",
     host: "127.0.0.1",
     port: "6379",
     username: "",
     password: "",
+    demo: false,
   });
 
   function handleAdd(e: React.FormEvent) {
@@ -40,11 +43,11 @@ export function ConnectionSidebar() {
       port: Number(form.port) || 6379,
       username: form.username,
       password: form.password,
-      demo: true,
+      demo: form.demo,
       color: pickColor(form.name),
     });
     setShowForm(false);
-    setForm({ name: "", host: "127.0.0.1", port: "6379", username: "", password: "" });
+    setForm({ name: "", host: "127.0.0.1", port: "6379", username: "", password: "", demo: false });
     void connect(id);
   }
 
@@ -98,6 +101,15 @@ export function ConnectionSidebar() {
             value={form.password}
             onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
           />
+          <label className="flex items-center gap-2 text-[11px] text-muted">
+            <input
+              type="checkbox"
+              checked={form.demo}
+              onChange={(e) => setForm((f) => ({ ...f, demo: e.target.checked }))}
+              className="rounded border-border"
+            />
+            Use demo engine (no redis-server)
+          </label>
           <p className="text-[10px] leading-snug text-subtle">
             Runs against the built-in demo engine in this preview (no real TCP).
           </p>
@@ -110,6 +122,13 @@ export function ConnectionSidebar() {
             </Button>
           </div>
         </form>
+      )}
+
+      
+      {connectionError && (
+        <div className="border-b border-danger/30 bg-danger/10 px-3 py-2 text-[11px] text-danger">
+          {connectionError}
+        </div>
       )}
 
       <div className="flex-1 overflow-y-auto p-2">

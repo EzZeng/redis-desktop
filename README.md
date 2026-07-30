@@ -42,11 +42,22 @@ Release: https://github.com/EzZeng/redis-desktop/releases/tag/offline-deps-v1
 
 
 
+
+## Real Redis server (desktop app)
+
+The **Windows Electron app** connects over TCP to a real `redis-server`:
+
+1. Start Redis locally (e.g. `redis-server` or Docker `redis:7`).
+2. Open **Local Redis** connection (`127.0.0.1:6379`) or add your host/port/password.
+3. Browse keys, edit values, run CLI against the live server.
+
+The web preview cannot open Redis TCP sockets; it uses the built-in **demo engine**. New connections default to TCP in the desktop app (optional “demo engine” checkbox).
+
 ## Windows desktop app
 
 Download the portable executable (no installer):
 
-- **[RedisDesktop-1.0.0-win-portable.exe](https://github.com/EzZeng/redis-desktop/releases/download/v1.0.0/RedisDesktop-1.0.0-win-portable.exe)**
+- **[RedisDesktop-1.1.0-win-portable.exe](https://github.com/EzZeng/redis-desktop/releases/download/v1.1.0/RedisDesktop-1.1.0-win-portable.exe)**
 
 Double-click to run. Uses the built-in demo Redis engine (no Redis server required).
 
@@ -55,7 +66,7 @@ Double-click to run. Uses the built-in demo Redis engine (no Redis server requir
 ```bash
 npm install
 npm run electron:build:win
-# output: release/Redis Desktop-1.0.0-win-portable.exe
+# output: release/Redis Desktop-1.1.0-win-portable.exe
 ```
 
 ## Scripts

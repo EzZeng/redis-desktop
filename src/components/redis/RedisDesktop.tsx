@@ -29,13 +29,17 @@ function RedisDesktopInner() {
   const [mobilePane, setMobilePane] = useState<MobilePane>("connections");
   const [autoConnected, setAutoConnected] = useState(false);
 
-  // Auto-connect demo on first load so the preview is immediately useful
+  // Auto-connect: prefer real Local Redis in Electron, else demo
   useEffect(() => {
     if (autoConnected || connected) return;
-    const demo = profiles.find((p) => p.demo);
-    if (demo) {
+    const isElectron = typeof window !== "undefined" && !!(window as unknown as { redisDesktop?: { isElectron?: boolean } }).redisDesktop?.isElectron;
+    const preferred =
+      (isElectron && profiles.find((p) => p.id === "local-redis")) ||
+      profiles.find((p) => p.demo) ||
+      profiles[0];
+    if (preferred) {
       setAutoConnected(true);
-      void connect(demo.id);
+      void connect(preferred.id);
     }
   }, [autoConnected, connected, profiles, connect]);
 

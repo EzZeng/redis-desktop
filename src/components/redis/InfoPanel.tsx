@@ -1,13 +1,30 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRedisStore } from "@/lib/redis/store";
 
 export function InfoPanel() {
-  const engine = useRedisStore((s) => s.engine);
   const keys = useRedisStore((s) => s.keys);
   const db = useRedisStore((s) => s.db);
   const profiles = useRedisStore((s) => s.profiles);
   const activeProfileId = useRedisStore((s) => s.activeProfileId);
+  const remote = useRedisStore((s) => s.remote);
+  const getInfoText = useRedisStore((s) => s.getInfoText);
+  const connected = useRedisStore((s) => s.connected);
   const profile = profiles.find((p) => p.id === activeProfileId);
+  const [infoText, setInfoText] = useState("");
+
+  useEffect(() => {
+    if (!connected) {
+      setInfoText("");
+      return;
+    }
+    let cancelled = false;
+    void getInfoText().then((t) => {
+      if (!cancelled) setInfoText(t);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, getInfoText, db, keys.length, remote]);
 
   const stats = useMemo(() => {
     const byType = { string: 0, hash: 0, list: 0, set: 0, zset: 0 };
@@ -18,8 +35,6 @@ export function InfoPanel() {
     }
     return { byType, withTtl, total: keys.length };
   }, [keys]);
-
-  const infoText = engine?.exec("INFO") ?? "";
 
   return (
     <div className="flex h-full flex-col overflow-auto bg-bg p-3">
@@ -32,6 +47,8 @@ export function InfoPanel() {
           <dd className="font-mono text-fg">
             {profile.host}:{profile.port}
           </dd>
+          <dt className="text-muted">Mode</dt>
+          <dd className="font-medium text-fg">{remote ? "redis-server (TCP)" : "demo engine"}</dd>
           <dt className="text-muted">Database</dt>
           <dd className="font-mono text-fg">db{db}</dd>
           <dt className="text-muted">Keys (filter)</dt>
@@ -67,7 +84,7 @@ export function InfoPanel() {
         INFO
       </h3>
       <pre className="mt-2 overflow-auto rounded-[var(--radius-md)] border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed text-muted">
-        {infoText}
+        {infoText || (connected ? "Loading…" : "Not connected")}
       </pre>
     </div>
   );

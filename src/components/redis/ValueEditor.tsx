@@ -59,24 +59,33 @@ export function ValueEditor() {
     setDirty(true);
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!draft || !selectedKey) return;
     const ttl = Number(ttlDraft);
-    saveValue(selectedKey, draft, Number.isFinite(ttl) ? ttl : -1);
-    setDirty(false);
-    toast.success("Key saved");
+    try {
+      await saveValue(selectedKey, draft, Number.isFinite(ttl) ? ttl : -1);
+      setDirty(false);
+      toast.success("Key saved");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Save failed");
+    }
   }
 
-  function handleRename() {
+  async function handleRename() {
     if (!selectedKey || !renameDraft.trim() || renameDraft === selectedKey) {
       setRenaming(false);
       return;
     }
-    if (renameKey(selectedKey, renameDraft.trim())) {
-      toast.success("Key renamed");
-      setRenaming(false);
-    } else {
-      toast.error("Rename failed");
+    try {
+      const ok = await renameKey(selectedKey, renameDraft.trim());
+      if (ok) {
+        toast.success("Key renamed");
+        setRenaming(false);
+      } else {
+        toast.error("Rename failed");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Rename failed");
     }
   }
 
