@@ -72,8 +72,8 @@ interface RedisState {
 
 const DEFAULT_PROFILES: ConnectionProfile[] = [
   {
-    id: "local-redis",
-    name: "Local Redis",
+    id: "embedded-redis",
+    name: "Embedded Redis Server",
     host: "127.0.0.1",
     port: 6379,
     username: "",
@@ -82,8 +82,18 @@ const DEFAULT_PROFILES: ConnectionProfile[] = [
     color: "#dc382d",
   },
   {
+    id: "local-redis",
+    name: "External Redis",
+    host: "127.0.0.1",
+    port: 6379,
+    username: "",
+    password: "",
+    demo: false,
+    color: "#3b82f6",
+  },
+  {
     id: "demo-local",
-    name: "Local Demo",
+    name: "In-memory Demo",
     host: "127.0.0.1",
     port: 6379,
     username: "",
@@ -136,7 +146,7 @@ export const useRedisStore = create<RedisState>()(
       sidebarTab: "keys",
 
       connect: async (profileId) => {
-        const profile = get().profiles.find((p) => p.id === profileId);
+        let profile = get().profiles.find((p) => p.id === profileId);
         if (!profile) return;
         set({
           connecting: true,
@@ -150,10 +160,30 @@ export const useRedisStore = create<RedisState>()(
           const wantRemote = !profile.demo && isElectronRuntime() && !!bridge;
 
           if (wantRemote && bridge) {
+            // Ensure built-in redis-server is up (especially Embedded profile)
+            if (bridge.serverStart) {
+              const srv = await bridge.serverStart({
+                host: "127.0.0.1",
+                port: 6379,
+                seed: true,
+              });
+              if (srv.ok && srv.port) {
+                if (profile.id === "embedded-redis") {
+                  const host = srv.host || "127.0.0.1";
+                  const port = srv.port;
+                  if (host !== profile.host || port !== profile.port) {
+                    get().updateProfile(profile.id, { host, port });
+                  }
+                  profile = { ...profile, host, port };
+                }
+              }
+            }
             const remote = new RemoteRedisEngine(bridge);
+            const connectHost = profile.host;
+            const connectPort = profile.port;
             await remote.connect({
-              host: profile.host,
-              port: profile.port,
+              host: connectHost,
+              port: connectPort,
               username: profile.username,
               password: profile.password,
               db: 0,
@@ -175,7 +205,10 @@ export const useRedisStore = create<RedisState>()(
                 {
                   id: nextId(),
                   kind: "sys",
-                  text: "Live TCP connection via Electron. Type HELP or any Redis command.",
+                  text:
+                    profile.id === "embedded-redis"
+                      ? "Built-in redis-server is running inside this app (RESP/TCP). External clients can also connect to this port."
+                      : "Live TCP connection via Electron. Type any Redis command in the CLI.",
                 },
               ],
             });

@@ -33,6 +33,23 @@ export interface RedisDesktopBridge {
     select: (db: number) => Promise<{ ok: boolean; db: number }>;
     exec: (line: string) => Promise<string>;
     currentDb: () => Promise<number>;
+    serverStatus: () => Promise<{
+      running: boolean;
+      host: string;
+      port: number;
+      clients: number;
+      mode: string;
+      version: string;
+    }>;
+    serverStart: (opts?: { host?: string; port?: number; seed?: boolean }) => Promise<{
+      ok: boolean;
+      error?: string;
+      running?: boolean;
+      host?: string;
+      port?: number;
+    }>;
+    serverStop: () => Promise<{ ok: boolean }>;
+    serverReseed: () => Promise<{ ok: boolean }>;
   };
 }
 

@@ -34,7 +34,8 @@ function RedisDesktopInner() {
     if (autoConnected || connected) return;
     const isElectron = typeof window !== "undefined" && !!(window as unknown as { redisDesktop?: { isElectron?: boolean } }).redisDesktop?.isElectron;
     const preferred =
-      (isElectron && profiles.find((p) => p.id === "local-redis")) ||
+      (isElectron && profiles.find((p) => p.id === "embedded-redis")) ||
+      (isElectron && profiles.find((p) => !p.demo)) ||
       profiles.find((p) => p.demo) ||
       profiles[0];
     if (preferred) {

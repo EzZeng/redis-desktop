@@ -21,5 +21,9 @@ contextBridge.exposeInMainWorld("redisDesktop", {
     select: (db) => ipcRenderer.invoke("redis:select", db),
     exec: (line) => ipcRenderer.invoke("redis:exec", line),
     currentDb: () => ipcRenderer.invoke("redis:currentDb"),
+    serverStatus: () => ipcRenderer.invoke("redis:server:status"),
+    serverStart: (opts) => ipcRenderer.invoke("redis:server:start", opts),
+    serverStop: () => ipcRenderer.invoke("redis:server:stop"),
+    serverReseed: () => ipcRenderer.invoke("redis:server:reseed"),
   },
 });

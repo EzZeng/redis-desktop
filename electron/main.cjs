@@ -1,11 +1,14 @@
 const { app, BrowserWindow, shell, ipcMain } = require("electron");
 const path = require("path");
 const { RedisClient } = require("./redis-client.cjs");
+const { EmbeddedRedisServer } = require("./embedded-server.cjs");
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 /** @type {RedisClient | null} */
 let redis = null;
+/** @type {EmbeddedRedisServer} */
+const embedded = new EmbeddedRedisServer();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -47,6 +50,31 @@ function ensureRedis() {
 }
 
 function registerIpc() {
+  ipcMain.handle("redis:server:status", async () => embedded.status());
+
+  ipcMain.handle("redis:server:start", async (_e, opts = {}) => {
+    try {
+      const st = await embedded.start({
+        host: opts.host || "127.0.0.1",
+        preferredPort: Number(opts.port) || 6379,
+        seed: opts.seed !== false,
+      });
+      return { ok: true, ...st };
+    } catch (err) {
+      return { ok: false, error: err.message || String(err) };
+    }
+  });
+
+  ipcMain.handle("redis:server:stop", async () => {
+    embedded.stop();
+    return { ok: true, ...embedded.status() };
+  });
+
+  ipcMain.handle("redis:server:reseed", async () => {
+    embedded.reseed();
+    return { ok: true };
+  });
+
   ipcMain.handle("redis:connect", async (_e, opts) => {
     try {
       if (redis) {
@@ -61,7 +89,7 @@ function registerIpc() {
         password: opts.password || "",
         db: Number(opts.db) || 0,
       });
-      return { ok: true, ...info };
+      return { ok: true, ...info, embedded: embedded.running && Number(opts.port) === embedded.port };
     } catch (err) {
       if (redis) {
         redis.disconnect();
@@ -85,6 +113,7 @@ function registerIpc() {
       db: redis ? redis.db : 0,
       host: redis ? redis.host : "",
       port: redis ? redis.port : 0,
+      server: embedded.status(),
     };
   });
 
@@ -153,8 +182,15 @@ function registerIpc() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerIpc();
+  // Start embedded redis-server before UI so Local Redis can connect immediately
+  try {
+    const st = await embedded.start({ host: "127.0.0.1", preferredPort: 6379, seed: true });
+    console.log(`[embedded-redis] listening on ${st.host}:${st.port}`);
+  } catch (err) {
+    console.error("[embedded-redis] failed to start:", err);
+  }
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -166,5 +202,6 @@ app.on("window-all-closed", () => {
     redis.disconnect();
     redis = null;
   }
+  embedded.stop();
   if (process.platform !== "darwin") app.quit();
 });
