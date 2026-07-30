@@ -14,14 +14,15 @@
     "preview": "vite preview --host 0.0.0.0 --port 8080",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "electron:dev": "vite build --config electron/vite.config.ts && electron .",
+    "electron:build:spa": "vite build --config electron/vite.config.ts",
+    "electron:build:win": "npm run electron:build:spa && electron-builder --win portable --x64 --publish never",
+    "electron:build:win:dir": "npm run electron:build:spa && electron-builder --win dir --x64 --publish never"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.3",
     "@hookform/resolvers": "^5.0.0",
-    "better-auth": "^1.4.0",
-    "kysely": "^0.28.5",
-    "pg": "^8.16.3",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.1.11",
@@ -49,11 +50,14 @@
     "@tanstack/react-start": "^1.160.0",
     "@tanstack/react-table": "^8.21.0",
     "@tanstack/router-plugin": "^1.160.0",
+    "better-auth": "^1.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.0.0",
+    "kysely": "^0.28.5",
     "lucide-react": "^0.510.0",
+    "pg": "^8.16.3",
     "react": "^19.1.0",
     "react-day-picker": "^9.14.0",
     "react-dom": "^19.1.0",
@@ -75,6 +79,9 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
     "eslint": "^9.20.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.6",
@@ -87,6 +94,51 @@
     "prettier": "^3.4.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
-    "vite": "^8.1.0"
-  }
+    "vite": "^8.1.0",
+    "vite-tsconfig-paths": "^6.1.1",
+    "wait-on": "^8.0.1"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.ezzeng.redis-desktop",
+    "productName": "Redis Desktop",
+    "copyright": "Copyright \u00a9 EzZeng",
+    "directories": {
+      "output": "release",
+      "buildResources": "electron/build"
+    },
+    "files": [
+      "electron/main.cjs",
+      "electron/preload.cjs",
+      "electron-dist/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-win-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development"
+    }
+  },
+  "version": "1.0.0"
 }

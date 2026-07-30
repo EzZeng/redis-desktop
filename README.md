@@ -41,6 +41,23 @@ npm run dev
 Release: https://github.com/EzZeng/redis-desktop/releases/tag/offline-deps-v1
 
 
+
+## Windows desktop app
+
+Download the portable executable (no installer):
+
+- **[RedisDesktop-1.0.0-win-portable.exe](https://github.com/EzZeng/redis-desktop/releases/download/v1.0.0/RedisDesktop-1.0.0-win-portable.exe)**
+
+Double-click to run. Uses the built-in demo Redis engine (no Redis server required).
+
+### Build the Windows app yourself
+
+```bash
+npm install
+npm run electron:build:win
+# output: release/Redis Desktop-1.0.0-win-portable.exe
+```
+
 ## Scripts
 
 | Command | Description |

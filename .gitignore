@@ -16,3 +16,6 @@ AGENTS.md
 .grok/
 vendor/
 migrations/
+
+electron-dist/
+release/
