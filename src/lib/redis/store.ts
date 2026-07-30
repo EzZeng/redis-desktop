@@ -49,7 +49,7 @@ interface RedisState {
   selectedValue: (RedisValue & { ttl: number }) | null;
   cliHistory: CliLine[];
   cliCmdHistory: string[];
-  sidebarTab: "keys" | "cli" | "info";
+  sidebarTab: "keys" | "cli" | "info" | "config";
   connect: (profileId: string) => Promise<void>;
   disconnect: () => Promise<void>;
   addProfile: (p: Omit<ConnectionProfile, "id">) => string;
@@ -64,7 +64,7 @@ interface RedisState {
   createKey: (key: string, type: RedisType, ttl?: number) => Promise<void>;
   runCli: (cmd: string) => Promise<void>;
   clearCli: () => void;
-  setSidebarTab: (t: "keys" | "cli" | "info") => void;
+  setSidebarTab: (t: "keys" | "cli" | "info" | "config") => void;
   renameKey: (oldKey: string, newKey: string) => Promise<boolean>;
   setTtl: (key: string, ttl: number) => Promise<void>;
   getInfoText: () => Promise<string>;

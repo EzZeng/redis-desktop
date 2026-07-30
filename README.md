@@ -44,6 +44,20 @@ Release: https://github.com/EzZeng/redis-desktop/releases/tag/offline-deps-v1
 
 
 
+
+## redis.conf
+
+The embedded server is **redis.conf-compatible**.
+
+- Default config ships as `electron/redis.conf`
+- On first run, copied to the app user data folder as `redis.conf`
+- Edit in the app **Conf** tab, or open the folder and use your editor
+- Supported directives include: `bind`, `port`, `requirepass`, `databases`,
+  `maxmemory`, `maxmemory-policy`, `maxclients`, `timeout`, `save`, `dir`,
+  `dbfilename`, `appendonly`, `appendfsync`, `rename-command`, `protected-mode`, …
+- Runtime: `CONFIG GET *`, `CONFIG SET`, `CONFIG REWRITE`, `SAVE` / `BGSAVE`
+- Snapshots written to `dir`/`dbfilename` (JSON dump format for the embedded engine)
+
 ## Built-in redis-server
 
 The **desktop app embeds a Redis-compatible server** (RESP/TCP on `127.0.0.1:6379`).
@@ -68,7 +82,7 @@ The web preview cannot open Redis TCP sockets; it uses the built-in **demo engin
 
 Download the portable executable (no installer):
 
-- **[RedisDesktop-1.2.0-win-portable.exe](https://github.com/EzZeng/redis-desktop/releases/download/v1.2.0/RedisDesktop-1.2.0-win-portable.exe)**
+- **[RedisDesktop-1.3.0-win-portable.exe](https://github.com/EzZeng/redis-desktop/releases/download/v1.3.0/RedisDesktop-1.3.0-win-portable.exe)**
 
 Double-click to run. Uses the built-in demo Redis engine (no Redis server required).
 
@@ -77,7 +91,7 @@ Double-click to run. Uses the built-in demo Redis engine (no Redis server requir
 ```bash
 npm install
 npm run electron:build:win
-# output: release/Redis Desktop-1.2.0-win-portable.exe
+# output: release/Redis Desktop-1.3.0-win-portable.exe
 ```
 
 ## Scripts

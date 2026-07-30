@@ -16,10 +16,44 @@ function globToRegExp(pattern) {
 }
 
 class EmbeddedEngine {
-  constructor() {
+  constructor(databases = 16) {
     this.dbs = new Map();
     this.dbIndex = 0;
-    for (let i = 0; i < 16; i++) this.dbs.set(i, new Map());
+    this.databaseCount = Math.min(64, Math.max(1, Number(databases) || 16));
+    for (let i = 0; i < this.databaseCount; i++) this.dbs.set(i, new Map());
+  }
+
+  exportAll() {
+    const out = {};
+    for (const [db, store] of this.dbs.entries()) {
+      const keys = {};
+      for (const [key, entry] of store.entries()) {
+        // skip expired
+        if (entry.expireAt !== null && Date.now() >= entry.expireAt) continue;
+        keys[key] = {
+          data: entry.data,
+          expireAt: entry.expireAt,
+        };
+      }
+      if (Object.keys(keys).length) out[String(db)] = keys;
+    }
+    return out;
+  }
+
+  importAll(databases) {
+    for (const db of this.dbs.values()) db.clear();
+    if (!databases || typeof databases !== "object") return;
+    for (const [dbStr, keys] of Object.entries(databases)) {
+      const db = Number(dbStr);
+      if (!this.dbs.has(db)) this.dbs.set(db, new Map());
+      const store = this.dbs.get(db);
+      for (const [key, entry] of Object.entries(keys || {})) {
+        store.set(key, {
+          data: entry.data,
+          expireAt: entry.expireAt ?? null,
+        });
+      }
+    }
   }
 
   store() {
@@ -43,7 +77,7 @@ class EmbeddedEngine {
   }
 
   select(db) {
-    if (db < 0 || db > 15) throw new Error("DB index is out of range");
+    if (db < 0 || db >= this.databaseCount) throw new Error("DB index is out of range");
     this.dbIndex = db;
   }
 

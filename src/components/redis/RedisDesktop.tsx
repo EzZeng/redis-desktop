@@ -5,6 +5,7 @@ import {
   Terminal,
   Info,
   KeyRound,
+  FileCode2,
 } from "lucide-react";
 import { Toaster } from "sonner";
 import { TitleBar } from "./TitleBar";
@@ -13,11 +14,12 @@ import { KeyBrowser } from "./KeyBrowser";
 import { ValueEditor } from "./ValueEditor";
 import { CliPanel } from "./CliPanel";
 import { InfoPanel } from "./InfoPanel";
+import { ConfigPanel } from "./ConfigPanel";
 import { Button } from "@/components/ui/button";
 import { useRedisStore } from "@/lib/redis/store";
 import { cn } from "@/lib/utils";
 
-type MobilePane = "connections" | "keys" | "value" | "cli" | "info";
+type MobilePane = "connections" | "keys" | "value" | "cli" | "info" | "config";
 
 function RedisDesktopInner() {
   const connected = useRedisStore((s) => s.connected);
@@ -83,6 +85,7 @@ function RedisDesktopInner() {
                   ["keys", KeyRound, "Keys"],
                   ["cli", Terminal, "CLI"],
                   ["info", Info, "Info"],
+                  ["config", FileCode2, "Conf"],
                 ] as const
               ).map(([id, Icon, label]) => (
                 <button
@@ -106,7 +109,11 @@ function RedisDesktopInner() {
             )}
           </div>
 
-          {!connected ? (
+          {sidebarTab === "config" ? (
+            <div className="min-h-0 flex-1">
+              <ConfigPanel />
+            </div>
+          ) : !connected ? (
             <Welcome />
           ) : sidebarTab === "cli" ? (
             <div className="min-h-0 flex-1">
@@ -144,6 +151,7 @@ function RedisDesktopInner() {
             (connected ? <CliPanel compact /> : <Welcome />)}
           {mobilePane === "info" &&
             (connected ? <InfoPanel /> : <Welcome />)}
+          {mobilePane === "config" && <ConfigPanel />}
         </div>
         <nav className="flex shrink-0 border-t border-border bg-surface pb-[env(safe-area-inset-bottom)]">
           {(
@@ -153,6 +161,7 @@ function RedisDesktopInner() {
               ["value", ValueIcon, "Value"],
               ["cli", Terminal, "CLI"],
               ["info", Info, "Info"],
+              ["config", FileCode2, "Conf"],
             ] as const
           ).map(([id, Icon, label]) => (
             <button

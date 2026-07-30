@@ -50,6 +50,16 @@ export interface RedisDesktopBridge {
     }>;
     serverStop: () => Promise<{ ok: boolean }>;
     serverReseed: () => Promise<{ ok: boolean }>;
+    confGet: () => Promise<{ ok: boolean; path: string; text: string; status?: unknown }>;
+    confSet: (payload: { text: string }) => Promise<{
+      ok: boolean;
+      error?: string;
+      path?: string;
+      restarted?: boolean;
+      status?: { port?: number; host?: string };
+    }>;
+    confPath: () => Promise<{ path: string }>;
+    confOpenDir: () => Promise<{ ok: boolean; path?: string }>;
   };
 }
 

@@ -25,5 +25,9 @@ contextBridge.exposeInMainWorld("redisDesktop", {
     serverStart: (opts) => ipcRenderer.invoke("redis:server:start", opts),
     serverStop: () => ipcRenderer.invoke("redis:server:stop"),
     serverReseed: () => ipcRenderer.invoke("redis:server:reseed"),
+    confGet: () => ipcRenderer.invoke("redis:server:conf:get"),
+    confSet: (payload) => ipcRenderer.invoke("redis:server:conf:set", payload),
+    confPath: () => ipcRenderer.invoke("redis:server:conf:path"),
+    confOpenDir: () => ipcRenderer.invoke("redis:server:conf:open-dir"),
   },
 });
