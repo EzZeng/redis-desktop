@@ -81,6 +81,26 @@ export function InfoPanel() {
       </div>
 
       <h3 className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-muted">
+        Spring / Jedis notes
+      </h3>
+      <ul className="mt-2 list-inside list-disc space-y-1 text-[11px] text-muted">
+        <li>
+          <code className="text-fg">SerializationFailedException</code> + stream header{" "}
+          <code className="text-fg">7B2274</code> = JSON body vs JDK deserializer
+        </li>
+        <li>
+          Use matching serializers on write/read (e.g.{" "}
+          <code className="text-fg">GenericJackson2JsonRedisSerializer</code>)
+        </li>
+        <li>
+          Spring Session: set <code className="text-fg">notify-keyspace-events Egx</code> in Conf
+        </li>
+        <li>
+          Mixed formats: run <code className="text-fg">FLUSHDB</code> then restart the Spring app
+        </li>
+      </ul>
+
+      <h3 className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-muted">
         INFO
       </h3>
       <pre className="mt-2 overflow-auto rounded-[var(--radius-md)] border border-border bg-surface p-3 font-mono text-[11px] leading-relaxed text-muted">

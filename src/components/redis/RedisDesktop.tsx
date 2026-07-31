@@ -202,8 +202,16 @@ function Welcome() {
           Redis Desktop
         </h1>
         <p className="mt-1 max-w-sm text-[12px] leading-relaxed text-muted">
-          Connect to a profile on the left to browse keys, edit values, and run CLI commands.
-          Sample data is ready in the Local Demo connection.
+          Connect to <strong className="text-fg">Local redis-server</strong> (bundled Redis 8.x)
+          or External Redis. Use <strong className="text-fg">In-memory Demo</strong> for sample keys only.
+        </p>
+        <p className="mt-3 max-w-md rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2 text-left text-[11px] leading-relaxed text-muted">
+          <span className="font-semibold text-fg">Spring SerializationFailedException?</span>
+          {" "}
+          Header <code className="text-fg">7B2274</code> means the value is{" "}
+          <strong className="text-fg">JSON</strong> but Spring used JDK{" "}
+          <code className="text-fg">DefaultDeserializer</code>. Align serializers
+          (Jackson/String) or <code className="text-fg">FLUSHDB</code> and rewrite keys from Spring.
         </p>
       </div>
     </div>

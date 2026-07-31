@@ -1,3 +1,43 @@
+## Spring Redis: SerializationFailedException
+
+If Spring logs:
+
+```text
+SerializationFailedException: Failed to deserialize payload
+StreamCorruptedException: invalid stream header: 7B2274
+```
+
+`7B2274` is ASCII `{"t` — the Redis value is **JSON**, but Spring used **JDK DefaultDeserializer**.
+
+### Fix (Spring app)
+
+```java
+@Bean
+public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory factory) {
+  RedisTemplate<String, Object> t = new RedisTemplate<>();
+  t.setConnectionFactory(factory);
+  var json = new GenericJackson2JsonRedisSerializer();
+  var str = new StringRedisSerializer();
+  t.setKeySerializer(str);
+  t.setHashKeySerializer(str);
+  t.setValueSerializer(json);
+  t.setHashValueSerializer(json);
+  t.afterPropertiesSet();
+  return t;
+}
+```
+
+Or keep JDK serialization on **both** write and read — never mix with JSON/`SET` from CLI.
+
+### Redis side
+
+```text
+FLUSHDB
+CONFIG SET notify-keyspace-events Egx   # Spring Session
+```
+
+---
+
 
 ## Bundled redis-server.exe (Windows)
 
