@@ -15,6 +15,7 @@ function resolveRedisBinDir() {
   if (process.resourcesPath) {
     candidates.push(path.join(process.resourcesPath, "redis-windows"));
   }
+  candidates.push(path.join(__dirname, "..", "redis-server-win"));
   candidates.push(path.join(__dirname, "..", "vendor", "redis-windows"));
   candidates.push(path.join(__dirname, "redis-windows"));
   for (const dir of candidates) {

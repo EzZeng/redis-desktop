@@ -151,7 +151,7 @@
     "nodeGypRebuild": false,
     "extraResources": [
       {
-        "from": "vendor/redis-windows",
+        "from": "redis-server-win",
         "to": "redis-windows",
         "filter": [
           "**/*"

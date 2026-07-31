@@ -15,8 +15,6 @@ AGENTS.md
 .node_modules.lock
 .grok/
 vendor/
-!vendor/redis-windows/
-!vendor/redis-windows/**
 
 migrations/
 
