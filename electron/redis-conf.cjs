@@ -39,6 +39,8 @@ const DEFAULTS = {
   // Misc
   daemonize: false,
   pidfile: "",
+  // Notifications
+  notify_keyspace_events: "",
   // App-specific
   seed_demo: true,
 };
@@ -194,15 +196,22 @@ function parseRedisConf(text) {
       case "seed_demo":
         conf.seed_demo = parseBool(args[0]);
         break;
+      case "notify_keyspace_events":
+        conf.notify_keyspace_events = unquote(args.join(" ") || "");
+        break;
       case "include":
         // handled by loadRedisConfFile recursively
         conf._includes = conf._includes || [];
         conf._includes.push(unquote(args[0] || ""));
         break;
-      default:
-        // keep unknown as string for CONFIG GET *
-        conf[`_${key}`] = args.join(" ");
+      default: {
+        // Preserve unknown redis.conf / CONFIG parameters (pass-through)
+        if (!conf._extras) conf._extras = {};
+        const redisKey = key.replace(/_/g, "-");
+        conf._extras[redisKey] = args.join(" ");
+        conf[key] = args.length === 1 ? args[0] : args.join(" ");
         break;
+      }
     }
   }
 
@@ -376,6 +385,20 @@ function loadRedisConfFile(filePath) {
 /**
  * Ensure user conf exists under userDataDir; copy defaults if missing.
  */
+/**
+ * Patch a single directive line in conf text (preserves all other content).
+ */
+function patchConfDirective(text, key, valueLine) {
+  const re = new RegExp(`^\\s*#?\\s*${key.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\s+.*$`, "im");
+  if (re.test(text)) {
+    // Replace first active (non-comment) occurrence if present, else uncomment/replace first match
+    const active = new RegExp(`^\\s*${key.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\s+.*$`, "im");
+    if (active.test(text)) return text.replace(active, valueLine);
+    return text.replace(re, valueLine);
+  }
+  return text.replace(/\s*$/, "") + "\n" + valueLine + "\n";
+}
+
 function ensureUserRedisConf(userDataDir, bundledDefaultPath) {
   fs.mkdirSync(userDataDir, { recursive: true });
   const confPath = path.join(userDataDir, "redis.conf");
@@ -385,13 +408,24 @@ function ensureUserRedisConf(userDataDir, bundledDefaultPath) {
   if (!fs.existsSync(confPath)) {
     let text = DEFAULT_CONF_TEXT;
     if (bundledDefaultPath && fs.existsSync(bundledDefaultPath)) {
+      // Keep full redis-windows redis.conf (includes notify-keyspace-events, etc.)
       text = fs.readFileSync(bundledDefaultPath, "utf8");
     }
-    // Force dir to user data
-    const conf = parseRedisConf(text);
-    conf.dir = dataDir;
-    conf.bind = conf.bind || "127.0.0.1";
-    fs.writeFileSync(confPath, serializeRedisConf(conf), "utf8");
+    // Minimal line patches only — never re-serialize (preserves all directives)
+    text = patchConfDirective(text, "dir", `dir ${JSON.stringify(dataDir)}`);
+    if (!/^\s*bind\s+/im.test(text)) {
+      text = `bind 127.0.0.1\n` + text;
+    }
+    if (!/^\s*daemonize\s+/im.test(text)) {
+      text += "\ndaemonize no\n";
+    } else {
+      text = text.replace(/^\s*daemonize\s+.*/gim, "daemonize no");
+    }
+    // Ensure notify-keyspace-events is present (default empty = disabled, same as Redis)
+    if (!/^\s*notify-keyspace-events\s+/im.test(text)) {
+      text += '\nnotify-keyspace-events ""\n';
+    }
+    fs.writeFileSync(confPath, text, "utf8");
   }
 
   return confPath;
@@ -425,8 +459,15 @@ function confToConfigGetPairs(conf) {
   put("rdbchecksum", conf.rdbchecksum ? "yes" : "no");
   put("stop-writes-on-bgsave-error", conf.stop_writes_on_bgsave_error ? "yes" : "no");
   put("seed-demo", conf.seed_demo !== false ? "yes" : "no");
+  put("notify-keyspace-events", conf.notify_keyspace_events || "");
   if (Array.isArray(conf.save)) {
     put("save", conf.save.map(([s, c]) => `${s} ${c}`).join(" "));
+  }
+  // Pass-through extras (any other redis.conf directives we loaded)
+  if (conf._extras && typeof conf._extras === "object") {
+    for (const [k, v] of Object.entries(conf._extras)) {
+      put(k, v);
+    }
   }
   return pairs;
 }
@@ -438,6 +479,7 @@ module.exports = {
   serializeRedisConf,
   loadRedisConfFile,
   ensureUserRedisConf,
+  patchConfDirective,
   confToConfigGetPairs,
   parseMemory,
   formatMemory,

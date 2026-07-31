@@ -138,8 +138,10 @@ class EmbeddedRedisServer {
       const loaded = loadRedisConfFile(opts.confPath);
       this.conf = loaded.conf;
       this.confPath = loaded.path;
+      this._rawConfText = loaded.text;
     } else if (opts.confText) {
       this.conf = parseRedisConf(opts.confText);
+      this._rawConfText = opts.confText;
     }
 
     // databases from conf
@@ -425,7 +427,9 @@ class EmbeddedRedisServer {
   }
 
   _configSet(key, val) {
-    switch (key) {
+    // Redis uses hyphenated names; clients may send either form
+    const k = String(key || "").toLowerCase().replace(/-/g, "_");
+    switch (k) {
       case "requirepass":
         this.conf.requirepass = String(val ?? "");
         break;
@@ -463,6 +467,10 @@ class EmbeddedRedisServer {
       case "seed_demo":
         this.conf.seed_demo = String(val).toLowerCase() === "yes";
         break;
+      case "notify_keyspace_events":
+        // Accept "" / empty to disable; any AEK$lshzxe... flags like real Redis
+        this.conf.notify_keyspace_events = String(val ?? "");
+        break;
       case "save":
         // CONFIG SET save "900 1 300 10"
         {
@@ -478,8 +486,14 @@ class EmbeddedRedisServer {
           this._scheduleSaves();
         }
         break;
-      default:
-        throw new Error(`ERR Unsupported CONFIG parameter: ${key}`);
+      default: {
+        // Pass-through: store unknown params (CONFIG GET * will return them)
+        if (!this.conf._extras) this.conf._extras = {};
+        const redisKey = k.replace(/_/g, "-");
+        this.conf._extras[redisKey] = String(val ?? "");
+        this.conf[k] = String(val ?? "");
+        break;
+      }
     }
   }
 
@@ -594,7 +608,8 @@ class EmbeddedRedisServer {
 
   saveConf() {
     if (!this.confPath) return null;
-    fs.writeFileSync(this.confPath, serializeRedisConf(this.conf), "utf8");
+    const text = this._rawConfText || serializeRedisConf(this.conf);
+    fs.writeFileSync(this.confPath, text, "utf8");
     return this.confPath;
   }
 
@@ -609,6 +624,7 @@ class EmbeddedRedisServer {
   }
 
   getConfText() {
+    if (this._rawConfText) return this._rawConfText;
     if (this.confPath && fs.existsSync(this.confPath)) {
       return fs.readFileSync(this.confPath, "utf8");
     }
@@ -616,11 +632,20 @@ class EmbeddedRedisServer {
   }
 
   setConfText(text, { restart = false } = {}) {
+    // Keep raw redis.conf text — do not re-serialize (would drop notify-keyspace-events, etc.)
     const conf = parseRedisConf(text);
     if (this.confPath) {
-      // preserve data dir if relative
-      if (!conf.dir || conf.dir === "./") conf.dir = this.conf.dir;
-      fs.writeFileSync(this.confPath, serializeRedisConf(conf), "utf8");
+      let out = String(text);
+      if ((!conf.dir || conf.dir === "./") && this.conf.dir) {
+        conf.dir = this.conf.dir;
+        if (/^\s*dir\s+/im.test(out)) {
+          out = out.replace(/^\s*dir\s+.*/gim, `dir ${JSON.stringify(this.conf.dir)}`);
+        }
+      }
+      fs.writeFileSync(this.confPath, out, "utf8");
+      this._rawConfText = out;
+    } else {
+      this._rawConfText = String(text);
     }
     this.conf = conf;
     this._scheduleSaves();
