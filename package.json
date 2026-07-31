@@ -114,6 +114,7 @@
       "electron/embedded-engine.cjs",
       "electron/embedded-server.cjs",
       "electron/redis-conf.cjs",
+      "electron/native-redis.cjs",
       "electron/redis.conf",
       "electron-dist/**/*",
       "package.json",
@@ -147,9 +148,18 @@
       "category": "Development"
     },
     "npmRebuild": false,
-    "nodeGypRebuild": false
+    "nodeGypRebuild": false,
+    "extraResources": [
+      {
+        "from": "vendor/redis-windows",
+        "to": "redis-windows",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
   },
-  "version": "1.3.1",
-  "description": "Desktop Redis client with built-in embedded redis-server",
+  "version": "1.4.0",
+  "description": "Desktop Redis client with bundled redis-server.exe (redis-windows)",
   "author": "EzZeng"
 }

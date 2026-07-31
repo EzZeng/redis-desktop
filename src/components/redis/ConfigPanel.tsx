@@ -105,13 +105,10 @@ export function ConfigPanel() {
         </Button>
       </div>
       <p className="border-b border-border px-3 py-2 text-[11px] text-muted">
-        Redis-compatible config for the embedded server. Supports{" "}
-        <code className="text-fg">bind</code>, <code className="text-fg">port</code>,{" "}
-        <code className="text-fg">requirepass</code>, <code className="text-fg">databases</code>,{" "}
-        <code className="text-fg">maxmemory</code>, <code className="text-fg">save</code>,{" "}
-        <code className="text-fg">dir</code>, <code className="text-fg">dbfilename</code>,{" "}
-        <code className="text-fg">appendonly</code>, <code className="text-fg">rename-command</code>,
-        and more. Saving restarts the embedded server.
+        Full <code className="text-fg">redis.conf</code> for the bundled{" "}
+        <strong className="text-fg">redis-server.exe</strong> (redis-windows 8.x). Same directives
+        as Redis on Linux/Windows: bind, port, requirepass, maxmemory, save, appendonly, modules,
+        etc. Saving restarts the server process.
       </p>
       <textarea
         className="min-h-0 flex-1 resize-none bg-cli-bg p-3 font-mono text-[12px] leading-relaxed text-cli-out outline-none"

@@ -73,7 +73,7 @@ interface RedisState {
 const DEFAULT_PROFILES: ConnectionProfile[] = [
   {
     id: "embedded-redis",
-    name: "Embedded Redis Server",
+    name: "Local redis-server",
     host: "127.0.0.1",
     port: 6379,
     username: "",
@@ -207,7 +207,7 @@ export const useRedisStore = create<RedisState>()(
                   kind: "sys",
                   text:
                     profile.id === "embedded-redis"
-                      ? "Built-in redis-server is running inside this app (RESP/TCP). External clients can also connect to this port."
+                      ? "Bundled redis-server (redis-windows) is running inside this app. Full Redis protocol — Jedis, redis-cli, etc. work on this port."
                       : "Live TCP connection via Electron. Type any Redis command in the CLI.",
                 },
               ],

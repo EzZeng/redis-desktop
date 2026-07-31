@@ -14,6 +14,9 @@ export function TitleBar() {
     running: boolean;
     host: string;
     port: number;
+    mode?: string;
+    version?: string;
+    backend?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -23,7 +26,15 @@ export function TitleBar() {
     let cancelled = false;
     const tick = () => {
       void bridge.serverStatus().then((s) => {
-        if (!cancelled) setServer({ running: s.running, host: s.host, port: s.port });
+        if (!cancelled)
+          setServer({
+            running: s.running,
+            host: s.host,
+            port: s.port,
+            mode: (s as { mode?: string }).mode,
+            version: (s as { version?: string }).version,
+            backend: (s as { backend?: string }).backend,
+          });
       });
     };
     tick();
@@ -48,10 +59,15 @@ export function TitleBar() {
         {server?.running && (
           <span
             className="hidden items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success sm:inline-flex"
-            title="Built-in redis-server accepting TCP connections"
+            title={
+              server.mode === "native-redis-server"
+                ? `Bundled redis-server.exe (${server.version || "redis-windows"})`
+                : "Embedded JS redis-compatible server"
+            }
           >
             <Server className="h-3 w-3" />
-            server {server.host}:{server.port}
+            {server.mode === "native-redis-server" ? "redis-server" : "embedded"}{" "}
+            {server.host}:{server.port}
           </span>
         )}
         {profile && (

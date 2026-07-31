@@ -1,3 +1,15 @@
+
+## Bundled redis-server.exe (Windows)
+
+On Windows the app ships **real redis-server** from [redis-windows/redis-windows](https://github.com/redis-windows/redis-windows) (msys2 build, Redis 8.x):
+
+- Full Redis command set (Jedis, StackExchange.Redis, redis-cli, …)
+- Standard `redis.conf` (user copy under app data)
+- Process managed by Redis Desktop (starts/stops with the app)
+- Fallback: JS embedded server if the binary is missing (e.g. Linux dev)
+
+Compared to a pure mock client, this matches Windows Redis Server behavior for protocol and commands.
+
 # Redis Desktop
 
 Desktop-style Redis client built with React, TanStack Start, and Tailwind CSS.
@@ -82,7 +94,7 @@ The web preview cannot open Redis TCP sockets; it uses the built-in **demo engin
 
 Download the portable executable (no installer):
 
-- **[RedisDesktop-1.3.0-win-portable.exe](https://github.com/EzZeng/redis-desktop/releases/download/v1.3.0/RedisDesktop-1.3.0-win-portable.exe)**
+- **[RedisDesktop-1.4.0-win-portable.exe](https://github.com/EzZeng/redis-desktop/releases/download/v1.4.0/RedisDesktop-1.4.0-win-portable.exe)**
 
 Double-click to run. Uses the built-in demo Redis engine (no Redis server required).
 
@@ -91,7 +103,7 @@ Double-click to run. Uses the built-in demo Redis engine (no Redis server requir
 ```bash
 npm install
 npm run electron:build:win
-# output: release/Redis Desktop-1.3.0-win-portable.exe
+# output: release/Redis Desktop-1.4.0-win-portable.exe
 ```
 
 ## Scripts

@@ -1,20 +1,34 @@
 const { app, BrowserWindow, shell, ipcMain } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const { RedisClient } = require("./redis-client.cjs");
 const { EmbeddedRedisServer } = require("./embedded-server.cjs");
-const { ensureUserRedisConf, serializeRedisConf } = require("./redis-conf.cjs");
+const { NativeRedisServer, resolveRedisBinDir } = require("./native-redis.cjs");
+const { ensureUserRedisConf } = require("./redis-conf.cjs");
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 /** @type {RedisClient | null} */
 let redis = null;
+
+/** @type {NativeRedisServer} */
+const native = new NativeRedisServer();
 /** @type {EmbeddedRedisServer} */
 const embedded = new EmbeddedRedisServer();
 
+/** Which backend is active: 'native' | 'embedded' | null */
+let backend = null;
+
 function confPaths() {
   const userData = app.getPath("userData");
-  const bundled = path.join(__dirname, "redis.conf");
-  return { userData, bundled, confPath: path.join(userData, "redis.conf") };
+  const bundledJs = path.join(__dirname, "redis.conf");
+  const binDir = resolveRedisBinDir();
+  const bundledNative = binDir ? path.join(binDir, "redis.conf") : null;
+  return {
+    userData,
+    bundled: bundledNative && fs.existsSync(bundledNative) ? bundledNative : bundledJs,
+    confPath: path.join(userData, "redis.conf"),
+  };
 }
 
 function createWindow() {
@@ -50,72 +64,142 @@ function createWindow() {
 }
 
 function ensureRedis() {
-  if (!redis || !redis.connected) {
-    throw new Error("Not connected to Redis");
-  }
+  if (!redis || !redis.connected) throw new Error("Not connected to Redis");
   return redis;
 }
 
-async function startEmbeddedFromConf() {
+function activeStatus() {
+  if (backend === "native") return { ...native.status(), backend: "native" };
+  if (backend === "embedded") return { ...embedded.status(), backend: "embedded" };
+  return {
+    running: false,
+    host: "127.0.0.1",
+    port: 6379,
+    mode: "stopped",
+    backend: null,
+    version: "",
+    confPath: confPaths().confPath,
+  };
+}
+
+async function startServer() {
   const { userData, bundled } = confPaths();
-  const confPath = ensureUserRedisConf(userData, bundled);
-  const st = await embedded.start({ confPath, seed: undefined });
-  console.log(`[embedded-redis] ${st.host}:${st.port} conf=${confPath}`);
-  return st;
+  // Prefer real redis-server.exe (redis-windows) on Windows
+  if (native.available()) {
+    try {
+      const st = await native.start({ userDataDir: userData, bundledAppConf: bundled });
+      backend = "native";
+      console.log(`[redis-server] native ${st.version} on ${st.host}:${st.port}`);
+      return { ok: true, ...st, backend: "native" };
+    } catch (err) {
+      console.error("[redis-server] native failed, falling back to embedded:", err.message);
+    }
+  }
+  // JS fallback (Linux dev / if native missing)
+  try {
+    if (embedded.running) return { ok: true, ...embedded.status(), backend: "embedded" };
+    const confPath = ensureUserRedisConf(userData, bundled);
+    const st = await embedded.start({ confPath });
+    backend = "embedded";
+    console.log(`[redis-server] embedded on ${st.host}:${st.port}`);
+    return { ok: true, ...st, backend: "embedded" };
+  } catch (err) {
+    return { ok: false, error: err.message || String(err) };
+  }
+}
+
+async function stopServer() {
+  if (backend === "native") await native.stop();
+  if (backend === "embedded") embedded.stop();
+  backend = null;
+}
+
+async function restartServer() {
+  await stopServer();
+  await new Promise((r) => setTimeout(r, 500));
+  return startServer();
+}
+
+function getConfText() {
+  if (backend === "native") return native.getConfText();
+  if (backend === "embedded") return embedded.getConfText();
+  const p = confPaths().confPath;
+  if (fs.existsSync(p)) return fs.readFileSync(p, "utf8");
+  return "";
+}
+
+function setConfText(text) {
+  if (backend === "native") {
+    native.setConfText(text);
+    return;
+  }
+  if (backend === "embedded") {
+    if (!embedded.confPath) {
+      const confPath = ensureUserRedisConf(confPaths().userData, confPaths().bundled);
+      embedded.confPath = confPath;
+    }
+    embedded.setConfText(text);
+    return;
+  }
+  const p = confPaths().confPath;
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, text, "utf8");
 }
 
 function registerIpc() {
-  ipcMain.handle("redis:server:status", async () => embedded.status());
+  ipcMain.handle("redis:server:status", async () => activeStatus());
 
-  ipcMain.handle("redis:server:start", async (_e, opts = {}) => {
+  ipcMain.handle("redis:server:start", async () => {
     try {
-      if (embedded.running) return { ok: true, ...embedded.status() };
-      const st = await startEmbeddedFromConf();
-      return { ok: true, ...st };
+      return await startServer();
     } catch (err) {
       return { ok: false, error: err.message || String(err) };
     }
   });
 
   ipcMain.handle("redis:server:stop", async () => {
-    embedded.stop();
-    return { ok: true, ...embedded.status() };
+    await stopServer();
+    return { ok: true, ...activeStatus() };
   });
 
   ipcMain.handle("redis:server:reseed", async () => {
-    embedded.reseed();
-    return { ok: true };
+    if (backend === "embedded") {
+      embedded.reseed();
+      return { ok: true };
+    }
+    // Native: flush + optional sample via client commands later
+    return { ok: false, error: "Reseed only supported for embedded engine; use FLUSHDB + seed scripts on redis-server.exe" };
   });
 
   ipcMain.handle("redis:server:conf:get", async () => {
     return {
       ok: true,
-      path: embedded.confPath || confPaths().confPath,
-      text: embedded.getConfText(),
-      status: embedded.status(),
+      path: activeStatus().confPath || confPaths().confPath,
+      text: getConfText(),
+      status: activeStatus(),
     };
   });
 
   ipcMain.handle("redis:server:conf:set", async (_e, payload = {}) => {
     try {
       const text = String(payload.text || "");
-      if (!embedded.confPath) {
-        const confPath = ensureUserRedisConf(confPaths().userData, confPaths().bundled);
-        embedded.confPath = confPath;
-      }
-      embedded.setConfText(text);
-      // Restart server to apply bind/port/databases
-      const wasRunning = embedded.running;
+      setConfText(text);
       const clientWas = redis && redis.connected;
-      if (wasRunning) {
-        embedded.stop();
-        await startEmbeddedFromConf();
+      if (redis) {
+        try {
+          redis.disconnect();
+        } catch {
+          /* ignore */
+        }
+        redis = null;
       }
+      const st = await restartServer();
       return {
-        ok: true,
-        path: embedded.confPath,
-        status: embedded.status(),
-        restarted: wasRunning,
+        ok: !!st.ok,
+        error: st.error,
+        path: confPaths().confPath,
+        status: activeStatus(),
+        restarted: true,
         reconnect: clientWas,
       };
     } catch (err) {
@@ -123,9 +207,9 @@ function registerIpc() {
     }
   });
 
-  ipcMain.handle("redis:server:conf:path", async () => {
-    return { path: embedded.confPath || confPaths().confPath };
-  });
+  ipcMain.handle("redis:server:conf:path", async () => ({
+    path: confPaths().confPath,
+  }));
 
   ipcMain.handle("redis:server:conf:open-dir", async () => {
     const dir = confPaths().userData;
@@ -139,18 +223,22 @@ function registerIpc() {
         redis.disconnect();
         redis = null;
       }
-      // Auto-start embedded if connecting to its bind address
-      if (!embedded.running) {
-        try {
-          await startEmbeddedFromConf();
-        } catch {
-          /* external only */
-        }
+      if (!backend) {
+        const st = await startServer();
+        if (!st.ok) return { ok: false, error: st.error || "Server failed to start" };
       }
       redis = new RedisClient();
+      const host = opts.host || "127.0.0.1";
+      let port = Number(opts.port) || 6379;
+      // If connecting to embedded/native profile, use actual bound port
+      const st = activeStatus();
+      if (st.running && (host === "127.0.0.1" || host === "localhost") && opts.useServerPort !== false) {
+        // Prefer live server port when profile points at default local
+        if (Number(opts.port) === 6379 || !opts.port) port = st.port || port;
+      }
       const info = await redis.connect({
-        host: opts.host || "127.0.0.1",
-        port: Number(opts.port) || 6379,
+        host,
+        port,
         username: opts.username || "",
         password: opts.password || "",
         db: Number(opts.db) || 0,
@@ -158,8 +246,8 @@ function registerIpc() {
       return {
         ok: true,
         ...info,
-        embedded: embedded.running && Number(opts.port) === embedded.port,
-        confPath: embedded.confPath,
+        backend,
+        server: activeStatus(),
       };
     } catch (err) {
       if (redis) {
@@ -178,19 +266,15 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("redis:status", async () => {
-    return {
-      connected: !!(redis && redis.connected),
-      db: redis ? redis.db : 0,
-      host: redis ? redis.host : "",
-      port: redis ? redis.port : 0,
-      server: embedded.status(),
-    };
-  });
+  ipcMain.handle("redis:status", async () => ({
+    connected: !!(redis && redis.connected),
+    db: redis ? redis.db : 0,
+    host: redis ? redis.host : "",
+    port: redis ? redis.port : 0,
+    server: activeStatus(),
+  }));
 
-  ipcMain.handle("redis:keys", async (_e, pattern) => {
-    return ensureRedis().listKeys(pattern || "*");
-  });
+  ipcMain.handle("redis:keys", async (_e, pattern) => ensureRedis().listKeys(pattern || "*"));
   ipcMain.handle("redis:getEntry", async (_e, key) => ensureRedis().getEntry(key));
   ipcMain.handle("redis:setString", async (_e, key, value, ttl) => {
     await ensureRedis().setString(key, value, ttl);
@@ -215,9 +299,7 @@ function registerIpc() {
   ipcMain.handle("redis:del", async (_e, keys) => ensureRedis().del(...(keys || [])));
   ipcMain.handle("redis:expire", async (_e, key, seconds) => ensureRedis().expire(key, seconds));
   ipcMain.handle("redis:persist", async (_e, key) => ensureRedis().persist(key));
-  ipcMain.handle("redis:rename", async (_e, oldKey, newKey) =>
-    ensureRedis().rename(oldKey, newKey),
-  );
+  ipcMain.handle("redis:rename", async (_e, oldKey, newKey) => ensureRedis().rename(oldKey, newKey));
   ipcMain.handle("redis:select", async (_e, db) => {
     await ensureRedis().select(db);
     return { ok: true, db };
@@ -229,9 +311,9 @@ function registerIpc() {
 app.whenReady().then(async () => {
   registerIpc();
   try {
-    await startEmbeddedFromConf();
+    await startServer();
   } catch (err) {
-    console.error("[embedded-redis] failed to start:", err);
+    console.error("[redis-server] start failed:", err);
   }
   createWindow();
   app.on("activate", () => {
@@ -239,11 +321,11 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("window-all-closed", () => {
+app.on("window-all-closed", async () => {
   if (redis) {
     redis.disconnect();
     redis = null;
   }
-  embedded.stop();
+  await stopServer();
   if (process.platform !== "darwin") app.quit();
 });

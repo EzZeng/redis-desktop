@@ -37,9 +37,12 @@ export interface RedisDesktopBridge {
       running: boolean;
       host: string;
       port: number;
-      clients: number;
-      mode: string;
-      version: string;
+      clients?: number;
+      mode?: string;
+      version?: string;
+      backend?: string | null;
+      confPath?: string;
+      engine?: string;
     }>;
     serverStart: (opts?: { host?: string; port?: number; seed?: boolean }) => Promise<{
       ok: boolean;
