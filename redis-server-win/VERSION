@@ -1,2 +1,2 @@
-redis-windows 8.10.0 (msys2)
-https://github.com/redis-windows/redis-windows
+redis 5.0.14.1 (tporadowski/redis Windows x64)
+https://github.com/tporadowski/redis/releases/tag/v5.0.14.1

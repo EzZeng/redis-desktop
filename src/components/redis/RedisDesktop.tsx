@@ -202,7 +202,7 @@ function Welcome() {
           Redis Desktop
         </h1>
         <p className="mt-1 max-w-sm text-[12px] leading-relaxed text-muted">
-          Connect to <strong className="text-fg">Local redis-server</strong> (bundled Redis 8.x)
+          Connect to <strong className="text-fg">Local redis-server</strong> (bundled Redis 5.0.14)
           or External Redis. Use <strong className="text-fg">In-memory Demo</strong> for sample keys only.
         </p>
         <p className="mt-3 max-w-md rounded-[var(--radius-md)] border border-border bg-surface px-3 py-2 text-left text-[11px] leading-relaxed text-muted">

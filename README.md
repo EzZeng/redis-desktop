@@ -1,3 +1,9 @@
+## Bundled redis-server version
+
+**Redis 5.0.14.1 for Windows** ([tporadowski/redis](https://github.com/tporadowski/redis)) — chosen for compatibility with older Spring Data Redis / Jedis stacks (e.g. Spring 4.x).
+
+To use a different server, connect the **External Redis** profile to your own instance.
+
 ## Spring Redis: SerializationFailedException
 
 If Spring logs:
@@ -41,7 +47,7 @@ CONFIG SET notify-keyspace-events Egx   # Spring Session
 
 ## Bundled redis-server.exe (Windows)
 
-On Windows the app ships **real redis-server** from [redis-windows/redis-windows](https://github.com/redis-windows/redis-windows) (msys2 build, Redis 8.x):
+On Windows the app ships **real redis-server** from [redis-windows/redis-windows](https://github.com/redis-windows/redis-windows) (msys2 build, Redis 5.0.14):
 
 - Full Redis command set (Jedis, StackExchange.Redis, redis-cli, …)
 - Standard `redis.conf` (user copy under app data)

@@ -106,7 +106,7 @@ export function ConfigPanel() {
       </div>
       <p className="border-b border-border px-3 py-2 text-[11px] text-muted">
         Full <code className="text-fg">redis.conf</code> for the bundled{" "}
-        <strong className="text-fg">redis-server.exe</strong> (redis-windows 8.x). Same directives
+        <strong className="text-fg">redis-server.exe</strong> (Redis 5.0.14 for Windows). Same directives
         as Redis on Linux/Windows: bind, port, requirepass, maxmemory, save, appendonly, modules,
         etc. Saving restarts the server process.
       </p>
