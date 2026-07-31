@@ -14,6 +14,7 @@ const {
   parseMemory,
 } = require("./redis-conf.cjs");
 
+
 function encodeResp(value) {
   if (value instanceof Error) {
     const msg =
@@ -23,28 +24,43 @@ function encodeResp(value) {
       value.message.startsWith("NOPERM")
         ? value.message
         : `ERR ${value.message}`;
-    return `-${msg}\r\n`;
+    return Buffer.from(`-${msg}\r\n`, "utf8");
   }
-  if (value === null || value === undefined) return "$-1\r\n";
+  if (value === null || value === undefined) return Buffer.from("$-1\r\n", "utf8");
   if (typeof value === "number" && Number.isFinite(value)) {
-    return `:${Math.trunc(value)}\r\n`;
+    return Buffer.from(`:${Math.trunc(value)}\r\n`, "utf8");
   }
-  if (typeof value === "boolean") return `:${value ? 1 : 0}\r\n`;
+  if (typeof value === "boolean") return Buffer.from(`:${value ? 1 : 0}\r\n`, "utf8");
+  if (Buffer.isBuffer(value)) {
+    return Buffer.concat([
+      Buffer.from(`$${value.length}\r\n`, "utf8"),
+      value,
+      Buffer.from("\r\n", "utf8"),
+    ]);
+  }
   if (typeof value === "string") {
     if (value === "OK" || value === "PONG" || value === "QUEUED") {
-      return `+${value}\r\n`;
+      return Buffer.from(`+${value}\r\n`, "utf8");
     }
     const buf = Buffer.from(value, "utf8");
-    return `$${buf.length}\r\n${value}\r\n`;
+    return Buffer.concat([
+      Buffer.from(`$${buf.length}\r\n`, "utf8"),
+      buf,
+      Buffer.from("\r\n", "utf8"),
+    ]);
   }
   if (Array.isArray(value)) {
-    let out = `*${value.length}\r\n`;
-    for (const item of value) out += encodeResp(item);
-    return out;
+    const parts = [Buffer.from(`*${value.length}\r\n`, "utf8")];
+    for (const item of value) parts.push(encodeResp(item));
+    return Buffer.concat(parts);
   }
   const s = String(value);
   const buf = Buffer.from(s, "utf8");
-  return `$${buf.length}\r\n${s}\r\n`;
+  return Buffer.concat([
+    Buffer.from(`$${buf.length}\r\n`, "utf8"),
+    buf,
+    Buffer.from("\r\n", "utf8"),
+  ]);
 }
 
 function parseResp(buf, offset = 0) {
@@ -63,7 +79,12 @@ function parseResp(buf, offset = 0) {
     const start = nl + 2;
     const end = start + len;
     if (buf.length < end + 2) return null;
-    return [buf.toString("utf8", start, end), end + 2];
+    const slice = Buffer.from(buf.subarray(start, end)); // copy
+    const asUtf8 = slice.toString("utf8");
+    const isUtf8 =
+      Buffer.from(asUtf8, "utf8").equals(slice) && !slice.includes(0);
+    if (isUtf8) return [asUtf8, end + 2];
+    return [slice, end + 2];
   }
   if (type === "*") {
     const count = Number(line);
@@ -360,7 +381,9 @@ class EmbeddedRedisServer {
             const prev = this.engine.dbIndex;
             this.engine.dbIndex = sessionDb;
             try {
-              const result = this.engine.dispatch(args.map(String));
+              const result = this.engine.dispatch(
+              args.map((x) => (Buffer.isBuffer(x) ? x : x == null ? "" : String(x))),
+            );
               if (cmd === "SELECT" && args[1] !== undefined) {
                 sessionDb = this.engine.dbIndex;
               }

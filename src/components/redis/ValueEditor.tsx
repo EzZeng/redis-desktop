@@ -62,7 +62,7 @@ export function ValueEditor() {
           (draft.value.trimStart().startsWith("{") || draft.value.trimStart().startsWith("["))
         ? "json"
         : "raw";
-  const isJavaSer = encoding === "java-serialized";
+  const isJavaSer = encoding === "java-serialized" || encoding === "binary";
   const isJson = encoding === "json";
   const readOnlyValue =
     isJavaSer ||
@@ -130,10 +130,9 @@ export function ValueEditor() {
         >
           {isJavaSer ? (
             <>
-              <strong>Java serialized value</strong> (Spring JDK /{" "}
-              <code className="text-[10px]">JdkSerializationRedisSerializer</code>).
-              Read-only here — editing as text causes{" "}
-              <code className="text-[10px]">StreamCorruptedException</code> in Spring.
+              <strong>Java serialized / binary</strong> (Spring Session uses JDK serialization).
+              Shown as type preview + base64 — not as {"\uFFFD"} garbage.
+              Read-only: editing would break Spring.
             </>
           ) : (
             <>
@@ -335,9 +334,11 @@ function HashEditor({
             />
           </td>
           <td className="p-1">
-            <Input
-              className="font-mono text-[12px]"
+            <textarea
+              className="min-h-[32px] w-full resize-y rounded-[var(--radius-sm)] border border-border bg-surface px-2 py-1.5 font-mono text-[11px] leading-snug text-fg"
+              rows={String(val).includes("\n") || String(val).startsWith("[Java") || String(val).startsWith("[Binary") ? 5 : 1}
               value={val}
+              readOnly={String(val).startsWith("[Java") || String(val).startsWith("[Binary")}
               onChange={(e) => onChange({ ...value, [field]: e.target.value })}
             />
           </td>
@@ -375,9 +376,11 @@ function ListEditor({
             {idx}
           </td>
           <td className="p-1">
-            <Input
-              className="font-mono text-[12px]"
+            <textarea
+              className="min-h-[32px] w-full resize-y rounded-[var(--radius-sm)] border border-border bg-surface px-2 py-1.5 font-mono text-[11px] leading-snug text-fg"
+              rows={String(item).includes("\n") || String(item).startsWith("[Java") || String(item).startsWith("[Binary") ? 4 : 1}
               value={item}
+              readOnly={String(item).startsWith("[Java") || String(item).startsWith("[Binary")}
               onChange={(e) => {
                 const next = [...value];
                 next[idx] = e.target.value;
@@ -412,9 +415,11 @@ function SetEditor({
       {value.map((item, idx) => (
         <tr key={idx} className="border-b border-border/60">
           <td className="p-1">
-            <Input
-              className="font-mono text-[12px]"
+            <textarea
+              className="min-h-[32px] w-full resize-y rounded-[var(--radius-sm)] border border-border bg-surface px-2 py-1.5 font-mono text-[11px] leading-snug text-fg"
+              rows={String(item).includes("\n") || String(item).startsWith("[Java") || String(item).startsWith("[Binary") ? 4 : 1}
               value={item}
+              readOnly={String(item).startsWith("[Java") || String(item).startsWith("[Binary")}
               onChange={(e) => {
                 const next = [...value];
                 next[idx] = e.target.value;

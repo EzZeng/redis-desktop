@@ -3,6 +3,25 @@
  * Returns native JS values for RESP encoding (not CLI-formatted strings).
  */
 
+function encodeStored(v) {
+  if (Buffer.isBuffer(v)) return { __bin: true, b64: v.toString("base64") };
+  if (v && typeof v === "object" && v.__bin && v.b64) return v;
+  return String(v ?? "");
+}
+
+function decodeStored(v) {
+  if (v && typeof v === "object" && v.__bin && v.b64) return Buffer.from(v.b64, "base64");
+  return v == null ? "" : v;
+}
+
+function storedEqual(a, b) {
+  const da = decodeStored(a);
+  const db = decodeStored(b);
+  if (Buffer.isBuffer(da) && Buffer.isBuffer(db)) return da.equals(db);
+  if (Buffer.isBuffer(da) || Buffer.isBuffer(db)) return false;
+  return String(da) === String(db);
+}
+
 function globToRegExp(pattern) {
   let out = "^";
   for (let i = 0; i < pattern.length; i++) {
@@ -89,7 +108,7 @@ class EmbeddedEngine {
 
   setString(key, value, ttl) {
     this.store().set(key, {
-      data: { type: "string", value: String(value) },
+      data: { type: "string", value: encodeStored(value) },
       expireAt: ttl && ttl > 0 ? Date.now() + ttl * 1000 : null,
     });
   }
@@ -209,7 +228,7 @@ class EmbeddedEngine {
         const e = this.purge(a[0] ?? "");
         if (!e) return null;
         if (e.data.type !== "string") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
-        return e.data.value;
+        return decodeStored(e.data.value);
       }
       case "SET": {
         if (a.length < 2) throw new Error("ERR wrong number of arguments for 'set' command");
@@ -267,7 +286,7 @@ class EmbeddedEngine {
         if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
         const flat = [];
         for (const [k, v] of Object.entries(e.data.value)) {
-          flat.push(k, v);
+          flat.push(k, decodeStored(v));
         }
         return flat;
       }
@@ -282,8 +301,9 @@ class EmbeddedEngine {
         if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
         let added = 0;
         for (let i = 1; i < a.length; i += 2) {
-          if (!(a[i] in e.data.value)) added++;
-          e.data.value[a[i]] = String(a[i + 1]);
+          const field = String(a[i]);
+          if (!(field in e.data.value)) added++;
+          e.data.value[field] = encodeStored(a[i + 1]);
         }
         return added;
       }
@@ -292,7 +312,7 @@ class EmbeddedEngine {
         if (!e) return null;
         if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
         const v = e.data.value[a[1] ?? ""];
-        return v === undefined ? null : v;
+        return v === undefined ? null : decodeStored(v);
       }
       case "HLEN": {
         const e = this.purge(a[0] ?? "");
@@ -311,7 +331,7 @@ class EmbeddedEngine {
         }
         if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
         for (let i = 1; i < a.length; i += 2) {
-          e.data.value[String(a[i])] = String(a[i + 1]);
+          e.data.value[String(a[i])] = encodeStored(a[i + 1]);
         }
         return "OK";
       }
@@ -357,7 +377,7 @@ class EmbeddedEngine {
         const e = this.purge(a[0] ?? "");
         if (!e) return [];
         if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
-        return Object.values(e.data.value);
+        return Object.values(e.data.value).map(decodeStored);
       }
       case "HINCRBY": {
         if (a.length < 3) throw new Error("ERR wrong number of arguments for 'hincrby' command");
@@ -484,12 +504,14 @@ class EmbeddedEngine {
         const e = this.purge(a[0] ?? "");
         if (!e) return 0;
         if (e.data.type !== "set") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
-        const set = new Set(e.data.value);
         let n = 0;
-        for (const m of a.slice(1)) {
-          if (set.delete(String(m))) n++;
+        const next = [];
+        for (const x of e.data.value) {
+          const remove = a.slice(1).some((m) => storedEqual(x, m));
+          if (remove) n++;
+          else next.push(x);
         }
-        e.data.value = [...set];
+        e.data.value = next;
         if (!e.data.value.length) this.store().delete(a[0]);
         return n;
       }
@@ -497,7 +519,7 @@ class EmbeddedEngine {
         const e = this.purge(a[0] ?? "");
         if (!e) return 0;
         if (e.data.type !== "set") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
-        return e.data.value.includes(String(a[1] ?? "")) ? 1 : 0;
+        return e.data.value.some((x) => storedEqual(x, a[1] ?? "")) ? 1 : 0;
       }
       case "ZREM": {
         if (a.length < 2) throw new Error("ERR wrong number of arguments for 'zrem' command");
@@ -560,7 +582,7 @@ class EmbeddedEngine {
         const e = this.purge(a[0] ?? "");
         if (!e) return [];
         if (e.data.type !== "set") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
-        return [...e.data.value];
+        return e.data.value.map(decodeStored);
       }
       case "SCARD": {
         const e = this.purge(a[0] ?? "");
@@ -576,15 +598,14 @@ class EmbeddedEngine {
           this.store().set(a[0], e);
         }
         if (e.data.type !== "set") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
-        const set = new Set(e.data.value);
         let added = 0;
         for (const m of a.slice(1)) {
-          if (!set.has(String(m))) {
-            set.add(String(m));
+          const exists = e.data.value.some((x) => storedEqual(x, m));
+          if (!exists) {
+            e.data.value.push(encodeStored(m));
             added++;
           }
         }
-        e.data.value = [...set];
         return added;
       }
       case "ZRANGE": {

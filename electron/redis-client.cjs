@@ -18,6 +18,176 @@ function encodeCommand(args) {
   return Buffer.concat(parts.map((p) => (Buffer.isBuffer(p) ? p : Buffer.from(p, "utf8"))));
 }
 
+
+/** @param {Buffer|string|null|undefined} value */
+function toBuffer(value) {
+  if (value == null) return null;
+  if (Buffer.isBuffer(value)) return value;
+  return Buffer.from(String(value), "utf8");
+}
+
+function isJavaSerialized(buf) {
+  return Buffer.isBuffer(buf) && buf.length >= 2 && buf[0] === 0xac && buf[1] === 0xed;
+}
+
+/**
+ * Detect if a bulk value is binary / Java-serialized (not clean UTF-8 text).
+ * @param {Buffer|string|null} value
+ */
+function analyzeBytes(value) {
+  if (value == null) {
+    return { text: "", encoding: "raw", binaryBase64: null, readOnly: false };
+  }
+  if (Buffer.isBuffer(value)) {
+    if (isJavaSerialized(value)) {
+      const decoded = tryDecodeJavaPreview(value);
+      return {
+        text: decoded,
+        encoding: "java-serialized",
+        binaryBase64: value.toString("base64"),
+        readOnly: true,
+        byteLength: value.length,
+      };
+    }
+    // valid utf-8 text without NULs?
+    const asUtf8 = value.toString("utf8");
+    if (Buffer.from(asUtf8, "utf8").equals(value) && !value.includes(0) && !hasReplacement(asUtf8)) {
+      return { text: asUtf8, encoding: looksJson(asUtf8) ? "json" : "raw", binaryBase64: null, readOnly: false };
+    }
+    return {
+      text: `[Binary · ${value.length} bytes]\n(base64)\n${value.toString("base64")}`,
+      encoding: "binary",
+      binaryBase64: value.toString("base64"),
+      readOnly: true,
+      byteLength: value.length,
+    };
+  }
+  const s = String(value);
+  // Already-decoded with replacement chars or control bytes → treat carefully
+  if (hasReplacement(s) || hasControlExceptWs(s)) {
+    // Re-interpret as latin1 bytes if it came from wrong path
+    const buf = Buffer.from(s, "binary");
+    if (isJavaSerialized(buf) || hasReplacement(s)) {
+      // Try from latin1 reconstruction
+      const b = Buffer.from(s, "latin1");
+      if (isJavaSerialized(b)) {
+        return {
+          text: tryDecodeJavaPreview(b),
+          encoding: "java-serialized",
+          binaryBase64: b.toString("base64"),
+          readOnly: true,
+          byteLength: b.length,
+        };
+      }
+      return {
+        text: `[Binary · ${b.length} bytes]\n(base64)\n${b.toString("base64")}`,
+        encoding: "binary",
+        binaryBase64: b.toString("base64"),
+        readOnly: true,
+        byteLength: b.length,
+      };
+    }
+  }
+  // Detect mis-decoded java (string that looks like "sr java.lang...")
+  if (/\bsr\s+java\./.test(s) || s.includes("java.lang.")) {
+    return {
+      text: s.replace(/\uFFFD/g, "·"),
+      encoding: "java-serialized",
+      binaryBase64: null,
+      readOnly: true,
+      note: "Java serialized (display sanitized)",
+    };
+  }
+  if (looksJson(s)) {
+    return { text: s, encoding: "json", binaryBase64: null, readOnly: false };
+  }
+  return { text: s, encoding: "raw", binaryBase64: null, readOnly: false };
+}
+
+function hasReplacement(s) {
+  return s.includes("\uFFFD");
+}
+
+function hasControlExceptWs(s) {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 32 && c !== 9 && c !== 10 && c !== 13) return true;
+  }
+  return false;
+}
+
+function looksJson(s) {
+  const t = s.trimStart();
+  return t.startsWith("{") || t.startsWith("[");
+}
+
+/**
+ * Human-readable preview for common Java serialization patterns used by Spring Session.
+ * Does not fully deserialize — just labels types safely for the UI.
+ */
+function tryDecodeJavaPreview(buf) {
+  const hex = buf.toString("hex").slice(0, 32);
+  // Spring often stores java.lang.Long / Integer / String in session hashes
+  const latin = buf.toString("latin1");
+  let typeHint = "";
+  if (latin.includes("java.lang.Long")) typeHint = "java.lang.Long";
+  else if (latin.includes("java.lang.Integer")) typeHint = "java.lang.Integer";
+  else if (latin.includes("java.lang.String")) typeHint = "java.lang.String";
+  else if (latin.includes("java.lang.Boolean")) typeHint = "java.lang.Boolean";
+  else if (latin.includes("java.util.")) {
+    const m = latin.match(/java\.util\.\w+/);
+    typeHint = m ? m[0] : "java.util.*";
+  } else if (latin.includes("org.springframework")) {
+    const m = latin.match(/org\.springframework[\w.]+/);
+    typeHint = m ? m[0] : "org.springframework.*";
+  }
+
+  // TC_STRING (0x74) content sometimes embeds readable session ids after binary header
+  const readable = extractReadableFragments(latin);
+
+  const lines = [
+    `[Java serialized · ${buf.length} bytes]`,
+    typeHint ? `type ≈ ${typeHint}` : null,
+    readable ? `text ≈ ${readable}` : null,
+    `(base64)`,
+    buf.toString("base64"),
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+function extractReadableFragments(latin) {
+  // Pull ASCII runs length >= 8 (session UUIDs, class names already handled)
+  const parts = [];
+  let cur = "";
+  for (let i = 0; i < latin.length; i++) {
+    const c = latin.charCodeAt(i);
+    if (c >= 32 && c < 127) {
+      cur += latin[i];
+    } else {
+      if (cur.length >= 8 && !cur.startsWith("java.") && !cur.startsWith("org.")) {
+        parts.push(cur);
+      }
+      cur = "";
+    }
+  }
+  if (cur.length >= 8 && !cur.startsWith("java.")) parts.push(cur);
+  // Prefer UUID-like / expires keys
+  const interesting = parts.filter(
+    (p) =>
+      /[0-9a-f]{8}-[0-9a-f]{4}-/i.test(p) ||
+      p.includes("expires:") ||
+      p.includes("session"),
+  );
+  const pick = interesting[0] || parts[0];
+  if (!pick) return "";
+  return pick.length > 80 ? pick.slice(0, 80) + "…" : pick;
+}
+
+function formatBulkForDisplay(value) {
+  return analyzeBytes(value).text;
+}
+
+
 /**
  * Parse one RESP value from buffer. Returns [value, bytesConsumed] or null if incomplete.
  */
@@ -69,7 +239,7 @@ function formatReply(value) {
   if (value === null || value === undefined) return "(nil)";
   if (typeof value === "number") return `(integer) ${value}`;
   if (Buffer.isBuffer(value)) {
-    return `"${value.toString("utf8")}"`;
+    return formatBulkForDisplay(value);
   }
   if (typeof value === "string") {
     if (value.includes("\n")) {
@@ -251,7 +421,7 @@ class RedisClient {
         if (!Array.isArray(reply) || reply.length < 2) break;
         cursor = String(reply[0]);
         const batch = reply[1];
-        if (Array.isArray(batch)) keys.push(...batch.map(String));
+        if (Array.isArray(batch)) keys.push(...batch.map((k) => (Buffer.isBuffer(k) ? k.toString("utf8") : String(k))));
       } while (cursor !== "0" && keys.length < 5000);
     } catch {
       const all = await this.call("KEYS", pattern);
@@ -311,55 +481,67 @@ class RedisClient {
     if (type === "string") {
       const value = await this.call("GET", key);
       if (value == null) return { type: "string", value: "", ttl, encoding: "raw" };
-      if (Buffer.isBuffer(value)) {
-        const b64 = value.toString("base64");
-        const isJava =
-          value.length >= 2 && value[0] === 0xac && value[1] === 0xed; // Java stream magic
-        return {
-          type: "string",
-          value: isJava
-            ? `[Java serialized binary — ${value.length} bytes]\n(base64)\n${b64}`
-            : `[Binary — ${value.length} bytes]\n(base64)\n${b64}`,
-          ttl,
-          encoding: isJava ? "java-serialized" : "binary",
-          binaryBase64: b64,
-          readOnly: true,
-        };
-      }
-      const s = String(value);
-      let encoding = "raw";
-      if (s.length >= 2 && s.charCodeAt(0) === 0xac && s.charCodeAt(1) === 0xed) {
-        // mis-decoded java ser as latin1-ish
-        encoding = "java-serialized";
-      } else if (s.trimStart().startsWith("{") || s.trimStart().startsWith("[")) {
-        encoding = "json";
-      }
-      return { type: "string", value: s, ttl, encoding, readOnly: encoding === "java-serialized" };
+      const a = analyzeBytes(value);
+      return {
+        type: "string",
+        value: a.text,
+        ttl,
+        encoding: a.encoding,
+        binaryBase64: a.binaryBase64,
+        readOnly: a.readOnly,
+      };
     }
     if (type === "hash") {
       const flat = await this.call("HGETALL", key);
       const obj = {};
+      const fieldMeta = {};
+      let anyBinary = false;
       if (Array.isArray(flat)) {
         for (let i = 0; i < flat.length; i += 2) {
-          obj[String(flat[i])] = String(flat[i + 1] ?? "");
+          const field = formatBulkForDisplay(flat[i]);
+          const analyzed = analyzeBytes(flat[i + 1]);
+          obj[field] = analyzed.text;
+          if (analyzed.encoding !== "raw" && analyzed.encoding !== "json") {
+            fieldMeta[field] = {
+              encoding: analyzed.encoding,
+              binaryBase64: analyzed.binaryBase64,
+              readOnly: analyzed.readOnly,
+            };
+            anyBinary = true;
+          }
         }
       }
-      return { type: "hash", value: obj, ttl };
+      return {
+        type: "hash",
+        value: obj,
+        ttl,
+        encoding: anyBinary ? "java-serialized" : "raw",
+        fieldMeta,
+        readOnly: anyBinary,
+      };
     }
     if (type === "list") {
       const arr = await this.call("LRANGE", key, "0", "-1");
+      const items = Array.isArray(arr) ? arr.map((v) => analyzeBytes(v)) : [];
+      const anyBinary = items.some((x) => x.readOnly);
       return {
         type: "list",
-        value: Array.isArray(arr) ? arr.map(String) : [],
+        value: items.map((x) => x.text),
         ttl,
+        encoding: anyBinary ? "java-serialized" : "raw",
+        readOnly: anyBinary,
       };
     }
     if (type === "set") {
       const arr = await this.call("SMEMBERS", key);
+      const items = Array.isArray(arr) ? arr.map((v) => analyzeBytes(v)) : [];
+      const anyBinary = items.some((x) => x.readOnly);
       return {
         type: "set",
-        value: Array.isArray(arr) ? arr.map(String) : [],
+        value: items.map((x) => x.text),
         ttl,
+        encoding: anyBinary ? "java-serialized" : "raw",
+        readOnly: anyBinary,
       };
     }
     if (type === "zset") {
