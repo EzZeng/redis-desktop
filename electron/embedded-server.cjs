@@ -366,6 +366,15 @@ class EmbeddedRedisServer {
               if (
                 [
                   "SET",
+                  "SETEX",
+                  "SETNX",
+                  "MSET",
+                  "GETSET",
+                  "APPEND",
+                  "INCR",
+                  "INCRBY",
+                  "DECR",
+                  "DECRBY",
                   "DEL",
                   "EXPIRE",
                   "PERSIST",
@@ -373,10 +382,17 @@ class EmbeddedRedisServer {
                   "FLUSHDB",
                   "FLUSHALL",
                   "HSET",
+                  "HMSET",
+                  "HDEL",
+                  "HINCRBY",
                   "LPUSH",
                   "RPUSH",
+                  "LPOP",
+                  "RPOP",
                   "SADD",
+                  "SREM",
                   "ZADD",
+                  "ZREM",
                 ].includes(cmd)
               ) {
                 this.changesSinceSave++;

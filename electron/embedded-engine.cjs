@@ -300,6 +300,223 @@ class EmbeddedEngine {
         if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
         return Object.keys(e.data.value).length;
       }
+      case "HMSET": {
+        // Deprecated alias of HSET with multiple fields — still used by Jedis and others
+        if (a.length < 3 || (a.length - 1) % 2 !== 0)
+          throw new Error("ERR wrong number of arguments for 'hmset' command");
+        let e = this.purge(a[0]);
+        if (!e) {
+          e = { data: { type: "hash", value: {} }, expireAt: null };
+          this.store().set(a[0], e);
+        }
+        if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        for (let i = 1; i < a.length; i += 2) {
+          e.data.value[String(a[i])] = String(a[i + 1]);
+        }
+        return "OK";
+      }
+      case "HMGET": {
+        if (a.length < 2) throw new Error("ERR wrong number of arguments for 'hmget' command");
+        const e = this.purge(a[0] ?? "");
+        if (e && e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        const fields = a.slice(1);
+        return fields.map((f) => {
+          if (!e) return null;
+          const v = e.data.value[String(f)];
+          return v === undefined ? null : v;
+        });
+      }
+      case "HDEL": {
+        if (a.length < 2) throw new Error("ERR wrong number of arguments for 'hdel' command");
+        const e = this.purge(a[0] ?? "");
+        if (!e) return 0;
+        if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        let n = 0;
+        for (const f of a.slice(1)) {
+          if (Object.prototype.hasOwnProperty.call(e.data.value, String(f))) {
+            delete e.data.value[String(f)];
+            n++;
+          }
+        }
+        if (Object.keys(e.data.value).length === 0) this.store().delete(a[0]);
+        return n;
+      }
+      case "HEXISTS": {
+        const e = this.purge(a[0] ?? "");
+        if (!e) return 0;
+        if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        return Object.prototype.hasOwnProperty.call(e.data.value, String(a[1] ?? "")) ? 1 : 0;
+      }
+      case "HKEYS": {
+        const e = this.purge(a[0] ?? "");
+        if (!e) return [];
+        if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        return Object.keys(e.data.value);
+      }
+      case "HVALS": {
+        const e = this.purge(a[0] ?? "");
+        if (!e) return [];
+        if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        return Object.values(e.data.value);
+      }
+      case "HINCRBY": {
+        if (a.length < 3) throw new Error("ERR wrong number of arguments for 'hincrby' command");
+        let e = this.purge(a[0]);
+        if (!e) {
+          e = { data: { type: "hash", value: {} }, expireAt: null };
+          this.store().set(a[0], e);
+        }
+        if (e.data.type !== "hash") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        const field = String(a[1]);
+        const inc = Number(a[2]);
+        if (!Number.isFinite(inc)) throw new Error("ERR value is not an integer or out of range");
+        const cur = e.data.value[field];
+        const base = cur === undefined || cur === "" ? 0 : Number(cur);
+        if (!Number.isFinite(base)) throw new Error("ERR hash value is not an integer");
+        const next = Math.trunc(base + inc);
+        e.data.value[field] = String(next);
+        return next;
+      }
+      case "MGET": {
+        if (!a.length) throw new Error("ERR wrong number of arguments for 'mget' command");
+        return a.map((k) => {
+          const e = this.purge(k);
+          if (!e || e.data.type !== "string") return null;
+          return e.data.value;
+        });
+      }
+      case "MSET": {
+        if (a.length < 2 || a.length % 2 !== 0)
+          throw new Error("ERR wrong number of arguments for 'mset' command");
+        for (let i = 0; i < a.length; i += 2) {
+          this.setString(a[i], a[i + 1]);
+        }
+        return "OK";
+      }
+      case "GETSET": {
+        if (a.length < 2) throw new Error("ERR wrong number of arguments for 'getset' command");
+        const e = this.purge(a[0]);
+        let prev = null;
+        if (e) {
+          if (e.data.type !== "string") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+          prev = e.data.value;
+        }
+        this.setString(a[0], a[1]);
+        return prev;
+      }
+      case "SETEX": {
+        if (a.length < 3) throw new Error("ERR wrong number of arguments for 'setex' command");
+        const sec = Number(a[1]);
+        if (!Number.isFinite(sec)) throw new Error("ERR value is not an integer or out of range");
+        this.setString(a[0], a[2], sec);
+        return "OK";
+      }
+      case "SETNX": {
+        if (a.length < 2) throw new Error("ERR wrong number of arguments for 'setnx' command");
+        if (this.purge(a[0])) return 0;
+        this.setString(a[0], a[1]);
+        return 1;
+      }
+      case "INCR":
+      case "INCRBY":
+      case "DECR":
+      case "DECRBY": {
+        const key = a[0] ?? "";
+        let delta = 1;
+        if (cmd === "INCRBY") {
+          delta = Number(a[1]);
+          if (!Number.isFinite(delta)) throw new Error("ERR value is not an integer or out of range");
+        } else if (cmd === "DECR") {
+          delta = -1;
+        } else if (cmd === "DECRBY") {
+          delta = -Number(a[1]);
+          if (!Number.isFinite(delta)) throw new Error("ERR value is not an integer or out of range");
+        }
+        let e = this.purge(key);
+        let base = 0;
+        if (e) {
+          if (e.data.type !== "string") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+          base = e.data.value === "" ? 0 : Number(e.data.value);
+          if (!Number.isFinite(base)) throw new Error("ERR value is not an integer or out of range");
+        }
+        const next = Math.trunc(base + delta);
+        this.setString(key, String(next), e && e.expireAt ? Math.max(0, Math.ceil((e.expireAt - Date.now()) / 1000)) : undefined);
+        // preserve TTL if any
+        if (e && e.expireAt) {
+          const ent = this.purge(key);
+          if (ent) ent.expireAt = e.expireAt;
+        }
+        return next;
+      }
+      case "APPEND": {
+        if (a.length < 2) throw new Error("ERR wrong number of arguments for 'append' command");
+        const e = this.purge(a[0]);
+        if (e && e.data.type !== "string") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        const next = (e ? e.data.value : "") + String(a[1]);
+        const ttl = e && e.expireAt ? Math.max(0, Math.ceil((e.expireAt - Date.now()) / 1000)) : undefined;
+        this.setString(a[0], next, ttl);
+        if (e && e.expireAt) {
+          const ent = this.purge(a[0]);
+          if (ent) ent.expireAt = e.expireAt;
+        }
+        return Buffer.byteLength(next, "utf8");
+      }
+      case "LPOP":
+      case "RPOP": {
+        const e = this.purge(a[0] ?? "");
+        if (!e) return null;
+        if (e.data.type !== "list") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        const v = cmd === "LPOP" ? e.data.value.shift() : e.data.value.pop();
+        if (!e.data.value.length) this.store().delete(a[0]);
+        return v === undefined ? null : v;
+      }
+      case "LINDEX": {
+        const e = this.purge(a[0] ?? "");
+        if (!e) return null;
+        if (e.data.type !== "list") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        let idx = Number(a[1]);
+        if (!Number.isFinite(idx)) throw new Error("ERR value is not an integer or out of range");
+        if (idx < 0) idx = e.data.value.length + idx;
+        return e.data.value[idx] === undefined ? null : e.data.value[idx];
+      }
+      case "SREM": {
+        if (a.length < 2) throw new Error("ERR wrong number of arguments for 'srem' command");
+        const e = this.purge(a[0] ?? "");
+        if (!e) return 0;
+        if (e.data.type !== "set") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        const set = new Set(e.data.value);
+        let n = 0;
+        for (const m of a.slice(1)) {
+          if (set.delete(String(m))) n++;
+        }
+        e.data.value = [...set];
+        if (!e.data.value.length) this.store().delete(a[0]);
+        return n;
+      }
+      case "SISMEMBER": {
+        const e = this.purge(a[0] ?? "");
+        if (!e) return 0;
+        if (e.data.type !== "set") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        return e.data.value.includes(String(a[1] ?? "")) ? 1 : 0;
+      }
+      case "ZREM": {
+        if (a.length < 2) throw new Error("ERR wrong number of arguments for 'zrem' command");
+        const e = this.purge(a[0] ?? "");
+        if (!e) return 0;
+        if (e.data.type !== "zset") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        const remove = new Set(a.slice(1).map(String));
+        const before = e.data.value.length;
+        e.data.value = e.data.value.filter((z) => !remove.has(z.member));
+        if (!e.data.value.length) this.store().delete(a[0]);
+        return before - e.data.value.length;
+      }
+      case "ZSCORE": {
+        const e = this.purge(a[0] ?? "");
+        if (!e) return null;
+        if (e.data.type !== "zset") throw new Error("WRONGTYPE Operation against a key holding the wrong kind of value");
+        const z = e.data.value.find((x) => x.member === String(a[1] ?? ""));
+        return z ? String(z.score) : null;
+      }
       case "LRANGE": {
         const e = this.purge(a[0] ?? "");
         if (!e) return [];

@@ -339,6 +339,34 @@ export class RedisEngine {
           }
           return `(integer) ${added}`;
         }
+        case "HMSET": {
+          if (args.length < 4 || (args.length - 2) % 2 !== 0)
+            return "(error) ERR wrong number of arguments for 'hmset' command";
+          const key = args[1]!;
+          let entry = this.purge(key);
+          if (!entry) {
+            entry = { data: { type: "hash", value: {} }, expireAt: null };
+            this.store().set(key, entry);
+          }
+          if (entry.data.type !== "hash") return "(error) WRONGTYPE";
+          for (let i = 2; i < args.length; i += 2) {
+            entry.data.value[args[i]!] = args[i + 1]!;
+          }
+          return "OK";
+        }
+        case "HMGET": {
+          if (args.length < 3) return "(error) ERR wrong number of arguments";
+          const e = this.getEntry(args[1] ?? "");
+          if (e && e.type !== "hash") return "(error) WRONGTYPE";
+          const fields = args.slice(2);
+          if (!fields.length) return "(empty array)";
+          return fields
+            .map((f, i) => {
+              const v = e && e.type === "hash" ? e.value[f!] : undefined;
+              return v === undefined ? `${i + 1}) (nil)` : `${i + 1}) "${v}"`;
+            })
+            .join("\n");
+        }
         case "HGET": {
           const e = this.getEntry(args[1] ?? "");
           if (!e) return "(nil)";
