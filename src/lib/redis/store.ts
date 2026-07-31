@@ -68,6 +68,7 @@ interface RedisState {
   renameKey: (oldKey: string, newKey: string) => Promise<boolean>;
   setTtl: (key: string, ttl: number) => Promise<void>;
   getInfoText: () => Promise<string>;
+  flushDb: () => Promise<void>;
 }
 
 const DEFAULT_PROFILES: ConnectionProfile[] = [
@@ -521,6 +522,14 @@ export const useRedisStore = create<RedisState>()(
         const { engine } = get();
         if (!engine) return "";
         return engineExec(engine, "INFO");
+      },
+
+      flushDb: async () => {
+        const { engine } = get();
+        if (!engine) return;
+        await engineExec(engine, "FLUSHDB");
+        set({ selectedKey: null, selectedValue: null });
+        await get().refreshKeys();
       },
     }),
     {

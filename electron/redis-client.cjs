@@ -5,13 +5,17 @@
 const net = require("net");
 
 function encodeCommand(args) {
-  let out = `*${args.length}\r\n`;
+  const parts = [`*${args.length}\r\n`];
   for (const a of args) {
-    const s = String(a);
-    const buf = Buffer.from(s, "utf8");
-    out += `$${buf.length}\r\n${s}\r\n`;
+    let buf;
+    if (Buffer.isBuffer(a)) buf = a;
+    else if (a && a.__redisBinaryBase64) buf = Buffer.from(a.__redisBinaryBase64, "base64");
+    else buf = Buffer.from(String(a ?? ""), "utf8");
+    parts.push(`$${buf.length}\r\n`);
+    parts.push(buf);
+    parts.push("\r\n");
   }
-  return out;
+  return Buffer.concat(parts.map((p) => (Buffer.isBuffer(p) ? p : Buffer.from(p, "utf8"))));
 }
 
 /**
@@ -33,8 +37,15 @@ function parseResp(buf, offset = 0) {
     const start = nl + 2;
     const end = start + len;
     if (buf.length < end + 2) return null;
-    const str = buf.toString("utf8", start, end);
-    return [str, end + 2];
+    const slice = buf.subarray(start, end);
+    // Preserve binary (e.g. Java serialization). Mark with a private brand when not UTF-8 text.
+    const asUtf8 = slice.toString("utf8");
+    const isUtf8 =
+      Buffer.from(asUtf8, "utf8").equals(slice) &&
+      !slice.includes(0); // no NULs in text
+    if (isUtf8) return [asUtf8, end + 2];
+    // Binary payload — return Buffer so callers can handle
+    return [slice, end + 2];
   }
   if (type === "*") {
     const count = Number(line);
@@ -57,6 +68,9 @@ function formatReply(value) {
   if (value instanceof Error) return `(error) ${value.message}`;
   if (value === null || value === undefined) return "(nil)";
   if (typeof value === "number") return `(integer) ${value}`;
+  if (Buffer.isBuffer(value)) {
+    return `"${value.toString("utf8")}"`;
+  }
   if (typeof value === "string") {
     if (value.includes("\n")) {
       return value
@@ -296,7 +310,31 @@ class RedisClient {
 
     if (type === "string") {
       const value = await this.call("GET", key);
-      return { type: "string", value: value == null ? "" : String(value), ttl };
+      if (value == null) return { type: "string", value: "", ttl, encoding: "raw" };
+      if (Buffer.isBuffer(value)) {
+        const b64 = value.toString("base64");
+        const isJava =
+          value.length >= 2 && value[0] === 0xac && value[1] === 0xed; // Java stream magic
+        return {
+          type: "string",
+          value: isJava
+            ? `[Java serialized binary — ${value.length} bytes]\n(base64)\n${b64}`
+            : `[Binary — ${value.length} bytes]\n(base64)\n${b64}`,
+          ttl,
+          encoding: isJava ? "java-serialized" : "binary",
+          binaryBase64: b64,
+          readOnly: true,
+        };
+      }
+      const s = String(value);
+      let encoding = "raw";
+      if (s.length >= 2 && s.charCodeAt(0) === 0xac && s.charCodeAt(1) === 0xed) {
+        // mis-decoded java ser as latin1-ish
+        encoding = "java-serialized";
+      } else if (s.trimStart().startsWith("{") || s.trimStart().startsWith("[")) {
+        encoding = "json";
+      }
+      return { type: "string", value: s, ttl, encoding, readOnly: encoding === "java-serialized" };
     }
     if (type === "hash") {
       const flat = await this.call("HGETALL", key);
@@ -338,8 +376,16 @@ class RedisClient {
   }
 
   async setString(key, value, ttl) {
-    if (ttl && ttl > 0) await this.call("SET", key, value, "EX", String(ttl));
-    else await this.call("SET", key, value);
+    let payload = value;
+    // Restore binary from base64 marker objects or prefixes
+    if (value && typeof value === "object" && value.binaryBase64) {
+      payload = Buffer.from(value.binaryBase64, "base64");
+    } else if (typeof value === "string" && value.includes("(base64)\n")) {
+      const idx = value.indexOf("(base64)\n");
+      payload = Buffer.from(value.slice(idx + "(base64)\n".length).trim(), "base64");
+    }
+    if (ttl && ttl > 0) await this.call("SET", key, payload, "EX", String(ttl));
+    else await this.call("SET", key, payload);
   }
 
   async setHash(key, fields, ttl) {

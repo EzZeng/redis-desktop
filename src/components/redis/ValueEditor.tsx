@@ -54,6 +54,20 @@ export function ValueEditor() {
     );
   }
 
+  const encoding =
+    "encoding" in selectedValue
+      ? String((selectedValue as { encoding?: string }).encoding || "raw")
+      : draft.type === "string" &&
+          typeof draft.value === "string" &&
+          (draft.value.trimStart().startsWith("{") || draft.value.trimStart().startsWith("["))
+        ? "json"
+        : "raw";
+  const isJavaSer = encoding === "java-serialized";
+  const isJson = encoding === "json";
+  const readOnlyValue =
+    isJavaSer ||
+    !!("readOnly" in selectedValue && (selectedValue as { readOnly?: boolean }).readOnly);
+
   function markDirty(next: RedisValue) {
     setDraft(next);
     setDirty(true);
@@ -61,6 +75,10 @@ export function ValueEditor() {
 
   async function handleSave() {
     if (!draft || !selectedKey) return;
+    if (readOnlyValue) {
+      toast.error("Binary/Java-serialized value is read-only — editing would break Spring JDK deserialization");
+      return;
+    }
     const ttl = Number(ttlDraft);
     try {
       await saveValue(selectedKey, draft, Number.isFinite(ttl) ? ttl : -1);
@@ -100,6 +118,35 @@ export function ValueEditor() {
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-bg">
+
+      {(isJavaSer || isJson) && (
+        <div
+          className={cn(
+            "border-b px-3 py-2 text-[11px] leading-relaxed",
+            isJavaSer
+              ? "border-warning/30 bg-warning/10 text-warning"
+              : "border-primary/30 bg-primary/10 text-fg",
+          )}
+        >
+          {isJavaSer ? (
+            <>
+              <strong>Java serialized value</strong> (Spring JDK /{" "}
+              <code className="text-[10px]">JdkSerializationRedisSerializer</code>).
+              Read-only here — editing as text causes{" "}
+              <code className="text-[10px]">StreamCorruptedException</code> in Spring.
+            </>
+          ) : (
+            <>
+              <strong>JSON value</strong> detected. If Spring throws{" "}
+              <code className="text-[10px]">StreamCorruptedException</code> / invalid stream header{" "}
+              <code className="text-[10px]">7B2274</code>, the app is using JDK{" "}
+              <code className="text-[10px]">DefaultDeserializer</code> instead of Jackson.
+              Fix RedisTemplate serializers or run FLUSHDB and rewrite from Spring.
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <Badge variant={selectedValue.type}>{selectedValue.type}</Badge>
         {renaming ? (
@@ -165,7 +212,7 @@ export function ValueEditor() {
           >
             <Trash2 className="h-3.5 w-3.5 text-danger" />
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={!dirty}>
+          <Button size="sm" onClick={handleSave} disabled={!dirty || readOnlyValue}>
             <Save className="h-3.5 w-3.5" />
             Save
           </Button>
@@ -177,6 +224,7 @@ export function ValueEditor() {
           <StringEditor
             value={draft.value}
             onChange={(v) => markDirty({ type: "string", value: v })}
+            readOnly={readOnlyValue}
           />
         )}
         {draft.type === "hash" && (
@@ -217,9 +265,11 @@ export function ValueEditor() {
 function StringEditor({
   value,
   onChange,
+  readOnly = false,
 }: {
   value: string;
   onChange: (v: string) => void;
+  readOnly?: boolean;
 }) {
   const isJson = looksLikeJson(value);
   return (
@@ -228,7 +278,7 @@ function StringEditor({
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted">
           Value
         </span>
-        {isJson && (
+        {isJson && !readOnly && (
           <Button
             size="sm"
             variant="secondary"
@@ -245,10 +295,11 @@ function StringEditor({
         )}
       </div>
       <textarea
+        readOnly={readOnly}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         spellCheck={false}
-        className="min-h-[280px] flex-1 resize-y rounded-[var(--radius-md)] border border-border bg-surface p-3 font-mono text-[12px] leading-relaxed text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+        className="min-h-[280px] flex-1 resize-y rounded-[var(--radius-md)] border border-border bg-surface p-3 font-mono text-[12px] leading-relaxed text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 disabled:opacity-80"
       />
     </div>
   );

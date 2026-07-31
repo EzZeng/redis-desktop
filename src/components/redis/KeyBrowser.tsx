@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useMemo, useState } from "react";
 import {
   Clock,
@@ -26,6 +27,7 @@ export function KeyBrowser() {
   const createKey = useRedisStore((s) => s.createKey);
   const db = useRedisStore((s) => s.db);
   const selectDb = useRedisStore((s) => s.selectDb);
+  const flushDb = useRedisStore((s) => s.flushDb);
   const [draftFilter, setDraftFilter] = useState(filter);
   const [showCreate, setShowCreate] = useState(false);
   const [newKey, setNewKey] = useState("");
@@ -72,7 +74,20 @@ export function KeyBrowser() {
           <span className="ml-auto font-mono text-[11px] tabular-nums text-subtle">
             {visible.length} keys
           </span>
-          <Button variant="ghost" size="icon-sm" onClick={refreshKeys} aria-label="Refresh">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-[10px] text-danger"
+            title="Delete all keys in current DB (fixes mixed Spring serializers)"
+            onClick={() => {
+              if (window.confirm("FLUSHDB — delete ALL keys in this database?")) {
+                void flushDb().then(() => { try { toast.success("Database flushed"); } catch { /* ignore */ } });
+              }
+            }}
+          >
+            FLUSHDB
+          </Button>
+          <Button variant="ghost" size="icon-sm" onClick={() => void refreshKeys()} aria-label="Refresh">
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
           <Button
