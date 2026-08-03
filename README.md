@@ -1,3 +1,13 @@
+## Pub/Sub
+
+Embedded redis-server supports PUBLISH / SUBSCRIBE / PSUBSCRIBE (needed by Spring Session).
+Native redis-server 5.0.14 also supports full pub/sub.
+
+## Pub/Sub
+
+Embedded redis-server supports  /  /  (Spring Session Redis).
+Native redis-server.exe 5.0.14 also supports full pub/sub.
+
 ## Bundled redis-server version
 
 **Redis 5.0.14.1 for Windows** ([tporadowski/redis](https://github.com/tporadowski/redis)) — chosen for compatibility with older Spring Data Redis / Jedis stacks (e.g. Spring 4.x).

@@ -133,6 +133,10 @@ class EmbeddedRedisServer {
     this.port = 6379;
     this.running = false;
     this.clients = new Set();
+    /** @type {Map<string, Set<import("net").Socket>>} */
+    this.channelSubs = new Map();
+    /** @type {Map<string, Set<import("net").Socket>>} */
+    this.patternSubs = new Map();
     this.seeded = false;
     this._chain = Promise.resolve();
     this.conf = parseRedisConf("");
@@ -235,6 +239,7 @@ class EmbeddedRedisServer {
     }
 
     this.clients.add(socket);
+    socket._pubsub = { channels: new Set(), patterns: new Set(), mode: false };
     let sessionDb = 0;
     let authenticated = !this.conf.requirepass;
     let buffer = Buffer.alloc(0);
@@ -308,6 +313,40 @@ class EmbeddedRedisServer {
               socket.write(encodeResp(new Error("NOAUTH Authentication required.")));
               processBuffer();
               return;
+            }
+
+
+            // --- Pub/Sub (required by Spring Session / RedisMessageListenerContainer) ---
+            if (
+              cmd === "PUBLISH" ||
+              cmd === "SUBSCRIBE" ||
+              cmd === "PSUBSCRIBE" ||
+              cmd === "UNSUBSCRIBE" ||
+              cmd === "PUNSUBSCRIBE" ||
+              cmd === "PUBSUB"
+            ) {
+              this._handlePubSub(socket, cmd, args);
+              processBuffer();
+              return;
+            }
+
+            // In subscribe mode only a subset of commands is allowed
+            if (socket._pubsub && socket._pubsub.mode) {
+              const allowed = new Set([
+                "SUBSCRIBE", "PSUBSCRIBE", "UNSUBSCRIBE", "PUNSUBSCRIBE",
+                "PING", "QUIT", "RESET",
+              ]);
+              if (!allowed.has(cmd)) {
+                socket.write(
+                  encodeResp(
+                    new Error(
+                      "ERR only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT allowed in this context",
+                    ),
+                  ),
+                );
+                processBuffer();
+                return;
+              }
             }
 
             // CONFIG commands
@@ -443,10 +482,203 @@ class EmbeddedRedisServer {
       processBuffer();
     });
 
-    socket.on("close", () => this.clients.delete(socket));
-    socket.on("error", () => {
+    socket.on("close", () => {
+      this._pubsubUnsubscribeAll(socket);
       this.clients.delete(socket);
     });
+    socket.on("error", () => {
+      this._pubsubUnsubscribeAll(socket);
+      this.clients.delete(socket);
+    });
+  }
+
+
+  _pubsubUnsubscribeAll(socket) {
+    if (!socket || !socket._pubsub) return;
+    for (const ch of [...socket._pubsub.channels]) {
+      const set = this.channelSubs.get(ch);
+      if (set) {
+        set.delete(socket);
+        if (!set.size) this.channelSubs.delete(ch);
+      }
+    }
+    for (const pat of [...socket._pubsub.patterns]) {
+      const set = this.patternSubs.get(pat);
+      if (set) {
+        set.delete(socket);
+        if (!set.size) this.patternSubs.delete(pat);
+      }
+    }
+    socket._pubsub.channels.clear();
+    socket._pubsub.patterns.clear();
+    socket._pubsub.mode = false;
+  }
+
+  _matchPattern(pattern, channel) {
+    // Redis glob: * ? [abc]
+    let re = "^";
+    for (let i = 0; i < pattern.length; i++) {
+      const c = pattern[i];
+      if (c === "*") re += ".*";
+      else if (c === "?") re += ".";
+      else if ("+^${}()|[]\\.".includes(c)) re += "\\" + c;
+      else re += c;
+    }
+    re += "$";
+    try {
+      return new RegExp(re).test(channel);
+    } catch {
+      return false;
+    }
+  }
+
+  _doPublish(channel, message) {
+    let receivers = 0;
+    const ch = String(channel);
+    const msg = message; // string | Buffer
+    const chanSet = this.channelSubs.get(ch);
+    if (chanSet) {
+      for (const sock of chanSet) {
+        if (sock.destroyed) continue;
+        try {
+          // message push: ["message", channel, payload]
+          sock.write(encodeResp(["message", ch, msg]));
+          receivers++;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    for (const [pat, set] of this.patternSubs.entries()) {
+      if (!this._matchPattern(pat, ch)) continue;
+      for (const sock of set) {
+        if (sock.destroyed) continue;
+        try {
+          sock.write(encodeResp(["pmessage", pat, ch, msg]));
+          receivers++;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    return receivers;
+  }
+
+  _handlePubSub(socket, cmd, args) {
+    if (!socket._pubsub) {
+      socket._pubsub = { channels: new Set(), patterns: new Set(), mode: false };
+    }
+    const ps = socket._pubsub;
+
+    if (cmd === "PUBLISH") {
+      if (args.length < 3) {
+        socket.write(encodeResp(new Error("ERR wrong number of arguments for 'publish' command")));
+        return;
+      }
+      const channel = String(args[1]);
+      const message = Buffer.isBuffer(args[2]) ? args[2] : String(args[2] ?? "");
+      const n = this._doPublish(channel, message);
+      socket.write(encodeResp(n));
+      return;
+    }
+
+    if (cmd === "PUBSUB") {
+      const sub = String(args[1] || "").toUpperCase();
+      if (sub === "CHANNELS") {
+        const pattern = args[2] != null ? String(args[2]) : null;
+        let channels = [...this.channelSubs.keys()];
+        if (pattern) channels = channels.filter((c) => this._matchPattern(pattern, c));
+        socket.write(encodeResp(channels));
+        return;
+      }
+      if (sub === "NUMSUB") {
+        const out = [];
+        for (let i = 2; i < args.length; i++) {
+          const ch = String(args[i]);
+          out.push(ch, this.channelSubs.get(ch)?.size || 0);
+        }
+        socket.write(encodeResp(out));
+        return;
+      }
+      if (sub === "NUMPAT") {
+        socket.write(encodeResp(this.patternSubs.size));
+        return;
+      }
+      socket.write(encodeResp(new Error("ERR Unknown PUBSUB subcommand or wrong number of arguments")));
+      return;
+    }
+
+    if (cmd === "SUBSCRIBE") {
+      const channels = args.slice(1).map(String);
+      if (!channels.length) {
+        socket.write(encodeResp(new Error("ERR wrong number of arguments for 'subscribe' command")));
+        return;
+      }
+      ps.mode = true;
+      for (const ch of channels) {
+        ps.channels.add(ch);
+        if (!this.channelSubs.has(ch)) this.channelSubs.set(ch, new Set());
+        this.channelSubs.get(ch).add(socket);
+        socket.write(encodeResp(["subscribe", ch, ps.channels.size + ps.patterns.size]));
+      }
+      return;
+    }
+
+    if (cmd === "PSUBSCRIBE") {
+      const patterns = args.slice(1).map(String);
+      if (!patterns.length) {
+        socket.write(encodeResp(new Error("ERR wrong number of arguments for 'psubscribe' command")));
+        return;
+      }
+      ps.mode = true;
+      for (const pat of patterns) {
+        ps.patterns.add(pat);
+        if (!this.patternSubs.has(pat)) this.patternSubs.set(pat, new Set());
+        this.patternSubs.get(pat).add(socket);
+        socket.write(encodeResp(["psubscribe", pat, ps.channels.size + ps.patterns.size]));
+      }
+      return;
+    }
+
+    if (cmd === "UNSUBSCRIBE") {
+      const targets = args.length > 1 ? args.slice(1).map(String) : [...ps.channels];
+      if (!targets.length) {
+        socket.write(encodeResp(["unsubscribe", null, ps.channels.size + ps.patterns.size]));
+        if (!ps.channels.size && !ps.patterns.size) ps.mode = false;
+        return;
+      }
+      for (const ch of targets) {
+        ps.channels.delete(ch);
+        const set = this.channelSubs.get(ch);
+        if (set) {
+          set.delete(socket);
+          if (!set.size) this.channelSubs.delete(ch);
+        }
+        socket.write(encodeResp(["unsubscribe", ch, ps.channels.size + ps.patterns.size]));
+      }
+      if (!ps.channels.size && !ps.patterns.size) ps.mode = false;
+      return;
+    }
+
+    if (cmd === "PUNSUBSCRIBE") {
+      const targets = args.length > 1 ? args.slice(1).map(String) : [...ps.patterns];
+      if (!targets.length) {
+        socket.write(encodeResp(["punsubscribe", null, ps.channels.size + ps.patterns.size]));
+        if (!ps.channels.size && !ps.patterns.size) ps.mode = false;
+        return;
+      }
+      for (const pat of targets) {
+        ps.patterns.delete(pat);
+        const set = this.patternSubs.get(pat);
+        if (set) {
+          set.delete(socket);
+          if (!set.size) this.patternSubs.delete(pat);
+        }
+        socket.write(encodeResp(["punsubscribe", pat, ps.channels.size + ps.patterns.size]));
+      }
+      if (!ps.channels.size && !ps.patterns.size) ps.mode = false;
+      return;
+    }
   }
 
   _configSet(key, val) {

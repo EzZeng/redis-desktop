@@ -696,6 +696,15 @@ class EmbeddedEngine {
       case "CONFIG":
         if (String(a[0] || "").toUpperCase() === "GET") return [];
         return "OK";
+      case "PUBLISH":
+        // Pub/Sub is handled by the TCP server layer; engine no-op returns 0
+        return 0;
+      case "SUBSCRIBE":
+      case "PSUBSCRIBE":
+      case "UNSUBSCRIBE":
+      case "PUNSUBSCRIBE":
+      case "PUBSUB":
+        return "OK";
       default:
         throw new Error(`ERR unknown command '${cmd.toLowerCase()}'`);
     }
